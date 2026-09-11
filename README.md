@@ -2,25 +2,56 @@
 
 A personal pantry inventory app for answering “do I already have this?” and keeping a useful shopping list.
 
-Planned home: **https://cupboardcache.sciomedes.com/**, hosted on GitHub Pages. Install it using Add to Home Screen and use it offline after the initial load. Inventory stays on the device in browser storage, with manual JSON export/import for backups. There are no accounts or synchronization in v1.
+Home: **https://cupboardcache.sciomedes.com/**, hosted on GitHub Pages. Install it using Add to Home Screen and use it offline after the initial load. Inventory stays on the device in IndexedDB, with manual JSON export/import for backups. There are no accounts, analytics, application backend, or synchronization.
 
 ## Project status
 
-Planning and repository setup are complete. Application development, Pages deployment, and domain configuration are the next steps; the app is not deployed yet.
+The M0–M4 feature set is implemented and automated checks pass. The first deployment is being verified; actual phone installation and the household pilot remain human acceptance gates.
 
-- [Development plan](DEVELOPMENT_PLAN.md): current architecture, data model, milestones, and open decisions.
+The app supports item editing, search and filters, fractional quantities with spare containers, package conversion, sticky shopping flags, purchases, shopping notes, shelf checks, duplicate merging, archiving/restoration, latest-action Undo, bounded quantity history, and validated JSON backups.
+
+- [Development plan](DEVELOPMENT_PLAN.md): architecture, data model, milestones, and implementation assumptions.
 - [Original planning brief](cupboardcache-planning-brief.md): product goals and initial constraints. Later hosting and installation clarifications are incorporated in the development plan.
 
-## First milestone
+## Use it
 
-Build a small PWA with TypeScript, Preact, Vite, a service worker, and IndexedDB. Prove that it installs on the phone, relaunches offline, and retains a saved record. Then build the first usable inventory around 20 real items, including backup and restore.
+1. Open the custom-domain URL online. Settings should say **App available offline**.
+2. Use Safari's Share → Add to Home Screen on iPhone/iPad, or the browser's Install action on Android or a laptop.
+3. Open the installed app and use it as the one working inventory. Add an item, wait for its successful save, then test closing and reopening in airplane mode.
+4. Export a backup in Settings and verify that you can import it. Import replaces this device's inventory after review; it does not merge copies.
+
+The working data is browser-managed storage, not a live JSON file in your Documents folder. Exports are ordinary dated JSON files. Clearing site data, changing browsers/origins, or losing the device can lose the working inventory. Installation is not a backup. Keep occasional exports somewhere safe, preferably off the working device.
+
+Use **Bought** to add purchased stock and clear its shopping flag. **Set actual** corrects the shelf count but preserves an existing shopping need. Qualitative mode keeps spares: 2.5 jars is two full jars plus half; **Out** affects the open container, while **All out** sets the entire stock to zero.
+
+## Develop and verify
+
+Use Node 22.12+ (Node 22 is used in CI) and npm.
+
+```sh
+npm ci
+npx playwright install chromium webkit
+npm run dev
+```
+
+```sh
+npm test
+npm run build
+npm run test:e2e
+```
+
+`npm run check` runs all three checks. Browser tests run against the production build, not the development server. `npm run preview` serves that build locally. Source modules separate the model, pure commands, transactional storage, and UI; production inventory is never used in tests.
+
+The PWA needs HTTPS (or localhost for development); opening `index.html` using `file://` is not supported. After installation and caching, normal use needs no network.
 
 ## Hosting
 
-The repository is `rduncangt/CupboardCache`. GitHub Actions will publish the built app to GitHub Pages. When the deployment is ready, configure the custom domain in Pages and add this DNS record:
+The public repository is [rduncangt/CupboardCache](https://github.com/rduncangt/CupboardCache). Pushes to `main` run type/build, unit, and desktop/mobile browser checks before publishing only `dist/` to GitHub Pages. Failed checks do not deploy. Pages uses GitHub Actions, the custom domain below, and enforced HTTPS.
 
 | Type | Name in sciomedes.com | Target |
 | --- | --- | --- |
 | CNAME | cupboardcache | rduncangt.github.io |
 
-The development plan includes domain verification, HTTPS, and rollout details. Keep personal inventory files and exported backups out of Git.
+Richard has configured this CNAME. GitHub has issued its certificate. The app uses root-relative assets, manifest scope, and service-worker scope for the custom domain; do not start real inventory at a temporary GitHub project URL.
+
+Keep personal inventory files and exported backups out of Git. Common backup directories and filenames are ignored. The deployed artifact contains application assets only; JSON exports, tests, and planning documents are not included.

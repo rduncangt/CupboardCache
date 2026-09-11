@@ -1,0 +1,20 @@
+# Dependencies and generated output
+node_modules/
+dist/
+coverage/
+playwright-report/
+test-results/
+.vite/
+
+# Local configuration
+.DS_Store
+.env
+.env.*
+!.env.example
+*.local
+
+# Personal inventory and exported backups; use synthetic test fixtures
+/cupboardcache*.json
+/backups/
+/exports/
+/private-data/

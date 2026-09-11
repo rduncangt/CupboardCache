@@ -129,7 +129,7 @@ interface QuantitySnapshot {
 interface QuantityEvent extends RecordMeta {
   item_id: UUID;
   reason: "initial" | "adjust" | "recount" | "purchase"
-        | "unit_change" | "merge" | "undo";
+        | "unit_change" | "merge" | "undo" | "use" | "add";
   before: QuantitySnapshot | null; // null for initial creation
   after: QuantitySnapshot;
   related_item_id: UUID | null;    // merge source, when applicable
@@ -147,6 +147,8 @@ interface Settings extends RecordMeta {
   last_export_at: Timestamp | null;
   writes_since_export: number;
   device_label: string;
+  last_trip_ended_at: Timestamp | null;
+  declared_locations: string[];
 }
 
 interface InventoryData extends RecordMeta {
@@ -258,7 +260,7 @@ Use the same versioned schema for the stored inventory and dated JSON backups. N
 
 Use a standard file input for import and a JSON download for export; add a native share action only if it helps on the actual phone. A download request alone cannot confirm that the file reached disk, so label it accurately and verify recovery by reopening an exported file during M1. [MDN download behavior](https://developer.mozilla.org/en-US/docs/Web/API/HTMLAnchorElement/download)
 
-Import is a full replacement, not a merge or synchronization feature. Parse and validate the entire candidate in memory, show item/history counts and its update date, offer to export the current data, then ask for an explicit restore. Replace the document in one transaction. Invalid files leave current state untouched. Preserve record UUIDs, timestamps, tombstones, flags, quantities, settings, and retained history; assign a fresh local commit revision so a restore cannot revive an old tab's revision. Do not generate purchases or re-evaluate thresholds during import.
+Import is a full replacement, not a merge or synchronization feature. Parse and validate the entire candidate in memory, show item/history counts and its update date, offer to export the current data, then ask for an explicit restore. Replace the document in one transaction. Invalid files leave current state untouched. Preserve record UUIDs, timestamps, tombstones, flags, quantities, settings, and retained history; assign a fresh local commit revision so a restore cannot revive an old tab's revision. Do not generate purchases or re-evaluate thresholds during import. Compact Ambry events (`at`, `kind`, `qty_before`, `qty_after`, `unit`, optional `unit_before`/`note`) are converted on import without losing history; see [data-format compatibility](DATA_FORMAT.md#compact-history-compatibility).
 
 Keep the previous stored document intact while preparing a migration or replacement. Migrate supported older schemas on a copy, validate the result, and commit only after success. Reject unknown newer versions with an understandable message. If application code is too old for the stored schema, preserve the data and require a compatible app version. Never recover a parsing, migration, or storage failure by silently creating an empty inventory.
 

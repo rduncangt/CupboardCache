@@ -23,7 +23,7 @@ The app supports item editing, search and filters, fractional quantities with sp
 
 The working data is browser-managed storage, not a live JSON file in your Documents folder. Exports are ordinary dated JSON files. Clearing site data, changing browsers/origins, or losing the device can lose the working inventory. Installation is not a backup. Keep occasional exports somewhere safe, preferably off the working device.
 
-Storage and backups use the preferred `starter-pantry.json` format (`app: "ambry"`, `schema_version: 1`). Existing CupboardCache inventories migrate automatically without changing item IDs or stock; old backups remain importable. The local starter file can be imported directly in Settings and is not published with the app.
+Storage and backups use the preferred `starter-pantry.json` format (`app: "ambry"`, `schema_version: 1`). Existing CupboardCache inventories migrate automatically without changing item IDs or stock; old backups remain importable. Both the local starter and `ccdata-backup.json` can be imported directly in Settings, including the latter's compact history and additional settings. Neither file is published with the app.
 
 Use **Bought** to add purchased stock and clear its shopping flag. **Set actual** corrects the shelf count but preserves an existing shopping need. Qualitative mode keeps spares: 2.5 jars is two full jars plus half; **Out** affects the open container, while **All out** sets the entire stock to zero.
 
@@ -43,11 +43,11 @@ npm run build
 npm run test:e2e
 ```
 
-`npm run check` runs all three checks. Browser tests run against the production build, not the development server. `npm run preview` serves that build locally. Source modules separate the model, pure commands, transactional storage, and UI; production inventory is never used in tests.
+`npm run check` runs all three checks. Browser tests run against the production build, not the development server. `npm run preview` serves that build locally. Source modules separate the model, pure commands, transactional storage, and UI. Tests use isolated browser profiles, never the user's working browser storage. Optional local file tests read the private starter/backup without modifying them.
 
 `npm run verify:live` checks HTTPS, the manifest/icons, offline relaunch, and backup recovery against the live site in an isolated browser profile containing only synthetic test inventory. Add `-- --wait-for-update` before a deployment to verify an actual old-to-new release. `npm run format` formats the app and test sources.
 
-Verification covers 40 public domain/storage/migration tests and 54 browser checks across desktop Chromium, phone-sized Chromium, and phone-sized WebKit. An additional local test validates the private starter file when present; it is skipped in CI because that file is not published. The scale fixture contains 1,000 items and 8,000 history events (about 3.6 MB). Phone installation and the household accuracy/usability gates remain in the pilot checklist.
+Verification covers 52 public domain/storage/migration tests and 60 browser checks across desktop Chromium, phone-sized Chromium, and phone-sized WebKit. Two additional local unit tests and six browser checks validate the complete private starter and backup files when present; they are skipped in CI because those files are not published. The scale fixture contains 1,000 items and 8,000 history events (about 3.6 MB). Phone installation and the household accuracy/usability gates remain in the pilot checklist.
 
 The PWA needs HTTPS (or localhost for development); opening `index.html` using `file://` is not supported. After installation and caching, normal use needs no network.
 

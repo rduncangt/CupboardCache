@@ -60,6 +60,7 @@ export function ItemEditor({
       'Pantry',
       'Fridge',
       'Freezer',
+      ...data.settings.declared_locations,
       ...data.items.flatMap((item) => (item.location ? [item.location] : [])),
     ]),
   ];
@@ -623,6 +624,7 @@ export function ItemDetails({
                     !retainedEventIds.has(event.undo_of_event_id) &&
                     ' · earlier event expired'}
                 </span>
+                {event.note && <span>{event.note}</span>}
               </div>
               <time>{dateLabel(event.created_at, true)}</time>
             </div>

@@ -2,7 +2,7 @@
 
 CupboardCache now stores and exports the format in the local `starter-pantry.json`. The file's `app: "ambry"` marker and `schema_version: 1` are retained for compatibility; the app is still called CupboardCache.
 
-The starter inventory is personal data and is excluded from Git and the deployed website. Import it through Settings when you want to use those items. Updating the app does not replace an existing inventory with the starter list.
+The starter inventory and `ccdata-backup.json` are personal data and are excluded from Git and the deployed website. Both can be imported directly through Settings. Updating the app does not replace an existing inventory with either file.
 
 ## Names used throughout the app
 
@@ -42,14 +42,33 @@ These are now present in the local starter file. Its 128 item records are unchan
 - `barcodes` is retained as an array of strings, including leading zeros, across edits, merges, import, and export. This change does not add barcode scanning or lookup.
 - `settings.retention_days` controls quantity-history retention.
 - `settings.last_export_at` and `settings.writes_since_export` track backup generation and subsequent saved changes. Export bookkeeping does not change the inventory revision or invalidate an open form/Undo. If bookkeeping cannot be saved, a valid backup can still be downloaded. These fields cannot prove that a download was kept safely.
+- `settings.last_trip_ended_at` and `settings.declared_locations` are additional preferences found in existing Ambry backups. The trip timestamp is retained without adding a shopping-trip workflow; declared locations are retained and offered in the item editor. Files without these fields receive `null` and `[]` during import; the source files are not modified.
 
 ## Events, extras, and package sizes
 
-The starter's empty `events` and `extras` arrays do not specify a different record shape. Existing fields are retained:
+The starter's empty `events` and `extras` arrays did not reveal the compact history shape used by other Ambry backups. CupboardCache retains its richer event snapshots for new writes and accepts both history shapes on import:
 
 - Each event has UUID/timestamps/soft-delete metadata, `item_id`, `reason`, `before`, `after`, `related_item_id`, `undo_of_event_id`, and `note`. A quantity snapshot contains `quantity`, `unit`, and `package_size`; `before` is null for creation.
 - Each extra has UUID/timestamps/soft-delete metadata, `text`, and `completed_at`.
 - `package_size` is null or `{ "amount": 1, "unit": "kg" }`, using g/kg/ml/l. Quantities and thresholds support six decimal places, not separate numeric and ladder quantities.
+
+### Compact history compatibility
+
+`ccdata-backup.json` uses the same item fields and envelope as the original starter, but contains 120 history entries with these compact fields:
+
+| Backup event field | Stored event field |
+| --- | --- |
+| `id`, `item_id` | Preserved unchanged |
+| `at` | `created_at` and `updated_at`; `deleted_at` is null |
+| `kind` | `reason`, preserving `use`, `add`, `recount`, `purchase`, and `unit_change` |
+| `qty_before` | `before.quantity` |
+| `unit_before` (optional) | `before.unit`; otherwise the event's `unit` |
+| `qty_after`, `unit` | `after.quantity`, `after.unit` |
+| `note` (optional) | `note`; null if absent, visible in quantity history |
+
+The compact history has no package-size snapshots or merge/Undo links; these are set to null, not inferred from today's stock. A compact unit-change event must include `unit_before`. Conversion preserves event IDs, timestamps, amounts, units, notes, and kinds, including zero-change events. Events are never replayed against the imported quantities or shopping flags. Validation still rejects malformed events, missing item references, duplicate IDs, and unknown fields before replacing any stored data. Export and re-import retain the normalized history and extra settings.
+
+Both private source files are tested locally in full, including browser import, reopen, export, and re-import. CI uses synthetic fixtures with the same shapes; personal files are never committed or deployed.
 
 ## Migration and recovery
 

@@ -12,6 +12,7 @@ import {
   validateInventory,
 } from './model';
 import { legacyFixture } from '../tests/legacy-fixture';
+import { compactFixture } from '../tests/compact-fixture';
 
 function starterFixture() {
   return {
@@ -113,6 +114,65 @@ describe('preferred starter format', () => {
     expect(readInventory(data)).toEqual({ data, migrated: false });
   });
 
+  it('imports compact history without replaying events or losing their meaning', () => {
+    const source = compactFixture();
+    const before = structuredClone(source);
+    const { data, migrated } = readInventory(source);
+    expect(migrated).toBe(true);
+    expect(source).toEqual(before);
+    expect(data.items).toEqual(source.items);
+    expect(data.settings).toMatchObject(source.settings);
+    expect(data.counts).toEqual(source.counts);
+    for (const [index, original] of source.events.entries()) {
+      expect(data.events[index]).toEqual({
+        id: original.id,
+        item_id: original.item_id,
+        created_at: original.at,
+        updated_at: original.at,
+        deleted_at: null,
+        reason: original.kind,
+        before: {
+          quantity: original.qty_before,
+          unit: 'unit_before' in original ? original.unit_before : original.unit,
+          package_size: null,
+        },
+        after: { quantity: original.qty_after, unit: original.unit, package_size: null },
+        related_item_id: null,
+        undo_of_event_id: null,
+        note: 'note' in original ? original.note : null,
+      });
+    }
+    expect(readInventory(data)).toEqual({ data, migrated: false });
+    const exported = exportedInventory(data);
+    expect(parseBackup(JSON.stringify(exported))).toEqual(exported);
+    expect(exported.events).toEqual(data.events);
+  });
+
+  it('adds new settings only when absent, including to existing CupboardCache documents', () => {
+    const data = emptyInventory();
+    const { last_trip_ended_at, declared_locations, ...earlierSettings } = data.settings;
+    const { data: migrated, migrated: changed } = readInventory({ ...data, settings: earlierSettings });
+    expect(changed).toBe(true);
+    expect(migrated).toEqual(data);
+    expect(migrated.settings).toMatchObject({ last_trip_ended_at: null, declared_locations: [] });
+    expect(readInventory(migrated).migrated).toBe(false);
+  });
+
+  it.each([
+    { at: undefined },
+    { at: 'not a timestamp' },
+    { kind: 'unknown event' },
+    { qty_before: undefined },
+    { qty_after: -1 },
+    { extra_data: 'must not be discarded' },
+    { created_at: '2026-09-01T00:00:00.000Z' },
+    { kind: 'unit_change', unit_before: undefined },
+  ])('rejects malformed compact events with a useful location: %j', (change) => {
+    const source = compactFixture();
+    Object.assign(source.events[0], change);
+    expect(() => readInventory(source)).toThrow('Invalid inventory at events.0');
+  });
+
   it('rejects malformed legacy records and future files without dropping unknown fields', () => {
     const old = legacyFixture();
     expect(() => readInventory({ ...old, schema_version: 99 })).toThrow('unsupported');
@@ -197,8 +257,37 @@ describe('preferred starter format', () => {
     'validates the complete private starter file without changing its contents',
     () => {
       const source = JSON.parse(readFileSync('starter-pantry.json', 'utf8'));
-      expect(parseBackup(JSON.stringify(source))).toEqual(source);
-    expect(source.items).toHaveLength(source.counts.items);
+      const data = parseBackup(JSON.stringify(source));
+      expect(data).toEqual({
+        ...source,
+        settings: { last_trip_ended_at: null, declared_locations: [], ...source.settings },
+      });
+      expect(source.items).toHaveLength(source.counts.items);
+    },
+  );
+
+  it.runIf(existsSync('ccdata-backup.json'))(
+    'imports every item and history entry from the complete private backup',
+    () => {
+      const source = JSON.parse(readFileSync('ccdata-backup.json', 'utf8'));
+      const data = parseBackup(JSON.stringify(source));
+      expect(data.items).toEqual(source.items);
+      expect(data.extras).toEqual(source.extras);
+      expect(data.settings).toMatchObject(source.settings);
+      expect(data.counts).toEqual(source.counts);
+      for (const [index, original] of source.events.entries()) {
+        expect(data.events[index]).toMatchObject({
+          id: original.id,
+          item_id: original.item_id,
+          created_at: original.at,
+          updated_at: original.at,
+          reason: original.kind,
+          before: { quantity: original.qty_before, unit: original.unit_before ?? original.unit },
+          after: { quantity: original.qty_after, unit: original.unit },
+          note: original.note ?? null,
+        });
+      }
+      expect(parseBackup(JSON.stringify(exportedInventory(data))).events).toEqual(data.events);
     },
   );
 });

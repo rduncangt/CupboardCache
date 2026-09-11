@@ -10,8 +10,9 @@ import {
   restoreInventory,
   undoLast,
 } from './storage';
-import { emptyInventory, newItemInput } from './model';
+import { emptyInventory, newItemInput, parseBackup, readInventory } from './model';
 import { legacyFixture } from '../tests/legacy-fixture';
+import { compactFixture } from '../tests/compact-fixture';
 
 beforeEach(async () => {
   vi.restoreAllMocks();
@@ -19,6 +20,35 @@ beforeEach(async () => {
 });
 
 describe('transactional persistence', () => {
+  it('migrates compact on-device history once, preserving inventory and preferences', async () => {
+    await loadInventory();
+    const source = compactFixture();
+    const database = await openDB('cupboardcache', 1);
+    await database.put('inventory', source, 'current');
+    database.close();
+    const migrated = await loadInventory();
+    expect(migrated.revision).toBe(1);
+    expect(migrated.items).toEqual(source.items);
+    expect(migrated.events).toEqual(readInventory(source).data.events);
+    expect(migrated.settings).toMatchObject(source.settings);
+    expect(await loadInventory()).toEqual(migrated);
+  });
+  it('leaves a failed compact-backup restore entirely uncommitted', async () => {
+    const empty = await loadInventory();
+    const current = await execute(
+      { type: 'create', input: { ...newItemInput(), name: 'Keep this inventory' } },
+      empty.revision,
+    );
+    const candidate = parseBackup(JSON.stringify(compactFixture()));
+    vi.spyOn(IDBObjectStore.prototype, 'put').mockImplementationOnce(() => {
+      throw new DOMException('Quota exceeded', 'QuotaExceededError');
+    });
+    await expect(restoreInventory(candidate, current.revision)).rejects.toThrow('Quota exceeded');
+    expect(await readStoredInventory()).toEqual(current);
+    const restored = await restoreInventory(candidate, current.revision);
+    expect(restored.items).toEqual(candidate.items);
+    expect(restored.events).toEqual(candidate.events);
+  });
   it('migrates old on-device data atomically, exactly once', async () => {
     await loadInventory();
     const old = legacyFixture();

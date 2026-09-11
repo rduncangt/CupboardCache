@@ -1,7 +1,10 @@
 import { expect, test } from '@playwright/test';
 import { readFile } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
 import { fixture, importFixture, stored } from './fixtures';
 import { legacyFixture } from './legacy-fixture';
+import { compactFixture } from './compact-fixture';
+import { readInventory } from '../src/model';
 
 test.beforeEach(async ({ page }) => {
   await page.goto('/');
@@ -120,3 +123,80 @@ test('restores an old backup even after exporting the current inventory from the
   await expect(page.getByRole('button', { name: 'Migration flour', exact: true })).toBeVisible();
   expect((await stored(page)).items[0].id).toBe(old.items[0].id);
 });
+
+test('imports compact history, displays notes and unit changes, and round-trips the backup', async ({
+  page,
+}) => {
+  const source = compactFixture();
+  const expected = readInventory(source).data;
+  await importFixture(page, source);
+  let saved = await stored(page);
+  expect(saved.items).toEqual(source.items);
+  expect(saved.events).toEqual(expected.events);
+  expect(saved.settings).toMatchObject(source.settings);
+  await page.getByRole('button', { name: 'History test beans', exact: true }).click();
+  await expect(page.locator('.history-row')).toHaveCount(5);
+  await expect(page.locator('.history-row').filter({ hasText: 'unit change' })).toContainText(
+    '2 jar → 6 count',
+  );
+  await expect(page.locator('.history-row').filter({ hasText: 'recount' })).toContainText(
+    'Shelf count corrected',
+  );
+  await page.getByRole('button', { name: 'Edit details' }).click();
+  await expect(page.locator('#locations option[value="Garage shelf"]')).toHaveCount(1);
+  await page.getByRole('button', { name: 'Save changes', exact: true }).click();
+  await expect(page.getByRole('dialog')).toBeHidden();
+  await page.reload();
+  saved = await stored(page);
+  expect(saved.events).toEqual(expected.events);
+  await page.getByRole('link', { name: 'Settings' }).filter({ visible: true }).click();
+  const download = page.waitForEvent('download');
+  await page.getByRole('button', { name: 'Export backup', exact: true }).click();
+  const backup = JSON.parse(await readFile((await (await download).path())!, 'utf8'));
+  expect(backup.events).toEqual(expected.events);
+  expect(backup.settings.last_trip_ended_at).toBe(source.settings.last_trip_ended_at);
+  expect(backup.settings.declared_locations).toEqual(source.settings.declared_locations);
+  await importFixture(page, backup);
+  expect((await stored(page)).events).toEqual(expected.events);
+});
+
+test('rejects a malformed compact history without replacing the saved inventory', async ({ page }) => {
+  await importFixture(page, fixture(1));
+  const original = await stored(page);
+  const source = compactFixture();
+  source.events[0].at = 'invalid date';
+  await page.getByLabel('Choose backup file').setInputFiles({
+    name: 'invalid-history.json',
+    mimeType: 'application/json',
+    buffer: Buffer.from(JSON.stringify(source)),
+  });
+  await expect(page.getByRole('alert')).toContainText('Invalid inventory at events.0.at');
+  expect(await stored(page)).toEqual(original);
+});
+
+// These files stay on the developer's device. CI runs the synthetic equivalent above.
+for (const file of ['starter-pantry.json', 'ccdata-backup.json']) {
+  test(`imports and exports the complete private ${file}`, async ({ page }) => {
+    test.skip(!existsSync(file), 'Personal inventory is never published to CI.');
+    const source = JSON.parse(await readFile(file, 'utf8'));
+    const expected = readInventory(source).data;
+    await importFixture(page, source);
+    const saved = await stored(page);
+    expect(saved.items).toEqual(source.items);
+    expect(saved.events).toEqual(expected.events);
+    expect(saved.extras).toEqual(source.extras);
+    expect(saved.settings).toMatchObject(source.settings);
+    expect(saved.counts).toEqual(source.counts);
+    await page.reload();
+    expect((await stored(page)).events).toEqual(expected.events);
+    await page.getByRole('link', { name: 'Settings' }).filter({ visible: true }).click();
+    const download = page.waitForEvent('download');
+    await page.getByRole('button', { name: 'Export backup', exact: true }).click();
+    const backup = JSON.parse(await readFile((await (await download).path())!, 'utf8'));
+    expect(backup.items).toEqual(source.items);
+    expect(backup.events).toEqual(expected.events);
+    expect(backup.extras).toEqual(source.extras);
+    await importFixture(page, backup);
+    expect((await stored(page)).events).toEqual(expected.events);
+  });
+}

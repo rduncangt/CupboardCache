@@ -49,16 +49,45 @@ const snapshotSchema = z.strictObject({
   unit: z.string().min(1).max(40),
   package_size: packageSchema.nullable(),
 });
+const eventReasonSchema = z.enum([
+  'initial',
+  'adjust',
+  'recount',
+  'purchase',
+  'unit_change',
+  'merge',
+  'undo',
+  'use',
+  'add',
+]);
 const eventSchema = z.strictObject({
   ...meta,
   item_id: z.uuid(),
-  reason: z.enum(['initial', 'adjust', 'recount', 'purchase', 'unit_change', 'merge', 'undo']),
+  reason: eventReasonSchema,
   before: snapshotSchema.nullable(),
   after: snapshotSchema,
   related_item_id: z.uuid().nullable(),
   undo_of_event_id: z.uuid().nullable(),
   note: z.string().max(2000).nullable(),
 });
+// Older Ambry backups use compact events, not record metadata and quantity snapshots.
+// Validate the entire source record before conversion so unknown fields cannot disappear.
+const compactEventSchema = z
+  .strictObject({
+    id: z.uuid(),
+    item_id: z.uuid(),
+    at: timestamp,
+    kind: eventReasonSchema,
+    qty_before: storedQuantity.nullable(),
+    qty_after: storedQuantity,
+    unit: z.string().min(1).max(40),
+    unit_before: z.string().min(1).max(40).optional(),
+    note: z.string().max(2000).nullable().optional(),
+  })
+  .refine((event) => event.kind !== 'unit_change' || event.unit_before !== undefined, {
+    path: ['unit_before'],
+    message: 'A unit-change event must identify its previous unit.',
+  });
 const extraSchema = z.strictObject({
   ...meta,
   text: z.string().trim().min(1).max(300),
@@ -70,6 +99,8 @@ const settingsSchema = z.strictObject({
   last_export_at: timestamp.nullable(),
   writes_since_export: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
   device_label: z.string().max(200),
+  last_trip_ended_at: timestamp.nullable(),
+  declared_locations: z.array(z.string().min(1).max(100)).max(20000),
 });
 const dataSchema = z.strictObject({
   ...meta,
@@ -119,6 +150,8 @@ export function emptyInventory(now = new Date().toISOString()): InventoryData {
       last_export_at: null,
       writes_since_export: 0,
       device_label: 'this device',
+      last_trip_ended_at: null,
+      declared_locations: [],
     },
   };
 }
@@ -262,11 +295,13 @@ export function readInventory(
         last_export_at: null,
         writes_since_export: 0,
         device_label: 'this device',
+        last_trip_ended_at: null,
+        declared_locations: [],
       },
     });
     return { data, migrated: true };
   }
-  // Original starter files omit document/settings metadata. Add only those missing fields.
+  // Original starter/backup files omit document/settings metadata and newer preferences.
   if (
     value &&
     typeof value === 'object' &&
@@ -280,22 +315,68 @@ export function readInventory(
     const settings = value.settings as Record<string, unknown>;
     const at = typeof record.exported_at === 'string' ? record.exported_at : now;
     const addMeta = (source: Record<string, unknown>) => ({
+      ...source,
       id: source.id === undefined ? crypto.randomUUID() : source.id,
       created_at: source.created_at === undefined ? at : source.created_at,
       updated_at: source.updated_at === undefined ? at : source.updated_at,
       deleted_at: source.deleted_at === undefined ? null : source.deleted_at,
-      ...source,
     });
-    const migrated =
+    let migrated =
       record.revision === undefined ||
+      settings.last_trip_ended_at === undefined ||
+      settings.declared_locations === undefined ||
       [record, settings].some((source) =>
         ['id', 'created_at', 'updated_at', 'deleted_at'].some((key) => source[key] === undefined),
       );
+    const events = Array.isArray(record.events)
+      ? record.events.map((event: unknown, index: number) => {
+          if (
+            !event ||
+            typeof event !== 'object' ||
+            !['at', 'kind', 'qty_before', 'qty_after', 'unit_before'].some((key) => key in event)
+          )
+            return event;
+          const parsed = compactEventSchema.safeParse(event);
+          if (!parsed.success) {
+            const issue = parsed.error.issues[0];
+            throw new Error(
+              `Invalid inventory at ${['events', index, ...issue.path].join('.')}: ${issue.message}`,
+            );
+          }
+          const old = parsed.data;
+          migrated = true;
+          return {
+            id: old.id,
+            item_id: old.item_id,
+            created_at: old.at,
+            updated_at: old.at,
+            deleted_at: null,
+            reason: old.kind,
+            before:
+              old.qty_before === null
+                ? null
+                : {
+                    quantity: old.qty_before,
+                    unit: old.unit_before ?? old.unit,
+                    package_size: null,
+                  },
+            after: { quantity: old.qty_after, unit: old.unit, package_size: null },
+            related_item_id: null,
+            undo_of_event_id: null,
+            note: old.note ?? null,
+          };
+        })
+      : record.events;
     return {
       data: validateInventory({
         ...addMeta(record),
         revision: record.revision === undefined ? 0 : record.revision,
-        settings: addMeta(settings),
+        events,
+        settings: {
+          ...addMeta(settings),
+          last_trip_ended_at: settings.last_trip_ended_at === undefined ? null : settings.last_trip_ended_at,
+          declared_locations: settings.declared_locations === undefined ? [] : settings.declared_locations,
+        },
       }),
       migrated,
     };

@@ -6,18 +6,43 @@ test.beforeEach(async ({ page }) => {
   await expect(page.getByRole('heading', { name: 'Good things, in stock.' })).toBeVisible();
 });
 
+test('editing metadata preserves the existing display mode and package measure', async ({ page }) => {
+  const data = fixture(1);
+  data.items[0].package_size = { amount: 1, unit: 'kg' };
+  data.items[0].never_prompt = true;
+  await importFixture(page, data);
+  await page.getByRole('button', { name: 'Smoked paprika', exact: true }).click();
+  await page.getByRole('button', { name: 'Edit details' }).click();
+  await expect(page.getByLabel('Quantity display', { exact: true })).toHaveValue('qualitative');
+  await expect(page.getByLabel('Package measure', { exact: true })).toHaveValue('kg');
+  await page.getByLabel('Description', { exact: true }).fill('Refill from the market');
+  await page.getByRole('button', { name: 'Save changes', exact: true }).click();
+  await expect(page.getByRole('dialog')).toBeHidden();
+  expect((await stored(page)).items[0]).toMatchObject({
+    quantity: 2.5,
+    display_mode: 'qualitative',
+    package_size: { amount: 1, unit: 'kg' },
+    never_prompt: true,
+    description: 'Refill from the market',
+  });
+});
+
 test('qualitative controls preserve spare jars and merge can be undone', async ({ page }) => {
   const data = fixture(2);
   await importFixture(page, data);
   await page.getByRole('button', { name: 'Smoked paprika', exact: true }).click();
   await page.getByRole('button', { name: 'Out', exact: true }).click();
   await expect(page.getByRole('dialog')).toBeHidden();
-  await expect(page.getByRole('button', { name: 'Set actual quantity for Smoked paprika' })).toContainText('2 full');
+  await expect(page.getByRole('button', { name: 'Set actual quantity for Smoked paprika' })).toContainText(
+    '2 full',
+  );
   await page.getByRole('button', { name: 'Smoked paprika', exact: true }).click();
   await page.getByRole('button', { name: 'Merge a duplicate' }).click();
   await page.getByLabel('Duplicate to combine').selectOption(data.items[1].id);
   await page.getByLabel('Actual combined quantity (jar)', { exact: true }).fill('2.5');
-  await page.getByRole('checkbox', { name: 'I reviewed the units, quantity, and details for the combined item.' }).check();
+  await page
+    .getByRole('checkbox', { name: 'I reviewed the units, quantity, and details for the combined item.' })
+    .check();
   await page.getByRole('button', { name: 'Merge into Smoked paprika' }).click();
   await expect(page.getByRole('dialog')).toBeHidden();
   const merged = await stored(page);
@@ -30,7 +55,12 @@ test('qualitative controls preserve spare jars and merge can be undone', async (
 
 test('package entry and explicit unit conversion preserve actual stock', async ({ page }) => {
   const data = fixture(1);
-  Object.assign(data.items[0], { name: 'Flour', unit: 'bag', package_size: { amount: 1, unit: 'kg' }, resupply_threshold: 1 });
+  Object.assign(data.items[0], {
+    name: 'Flour',
+    unit: 'bag',
+    package_size: { amount: 1, unit: 'kg' },
+    resupply_threshold: 1,
+  });
   await importFixture(page, data);
   await page.getByRole('button', { name: 'Set actual quantity for Flour' }).click();
   await page.getByLabel('Measure', { exact: true }).selectOption('g');
@@ -45,7 +75,13 @@ test('package entry and explicit unit conversion preserve actual stock', async (
   await page.getByRole('checkbox').check();
   await page.getByRole('button', { name: 'Convert unit', exact: true }).click();
   await expect(page.getByRole('dialog')).toBeHidden();
-  expect((await stored(page)).items[0]).toMatchObject({ quantity: 432, unit: 'g', package_size: null, resupply_threshold: 1000, resupply_flag: true });
+  expect((await stored(page)).items[0]).toMatchObject({
+    quantity: 432,
+    unit: 'g',
+    package_size: null,
+    resupply_threshold: 1000,
+    resupply_flag: true,
+  });
 });
 
 test('a failed save preserves both the previous stock and attempted input', async ({ page }) => {
@@ -75,7 +111,9 @@ test('a stale form in another tab cannot overwrite a newer save', async ({ page,
   await other.getByRole('button', { name: 'Set actual quantity for Smoked paprika' }).click();
   await other.getByLabel('Actual quantity', { exact: true }).fill('9');
   await page.getByRole('button', { name: 'Add one jar of Smoked paprika' }).click();
-  await expect(page.getByRole('button', { name: 'Set actual quantity for Smoked paprika' })).toContainText('3 full');
+  await expect(page.getByRole('button', { name: 'Set actual quantity for Smoked paprika' })).toContainText(
+    '3 full',
+  );
   await other.getByRole('button', { name: 'Save actual quantity' }).click();
   await expect(other.getByRole('alert')).toContainText('another window');
   expect((await stored(page)).items[0].quantity).toBe(3.5);
@@ -106,7 +144,9 @@ test('1000 items and a year of events remain searchable and recoverable', async 
   expect(searchMs).toBeLessThan(3000);
   const commitStart = performance.now();
   await page.getByRole('button', { name: 'Add one jar of Pantry item 0999' }).click();
-  await expect(page.getByRole('button', { name: 'Set actual quantity for Pantry item 0999' })).toContainText('3 full');
+  await expect(page.getByRole('button', { name: 'Set actual quantity for Pantry item 0999' })).toContainText(
+    '3 full',
+  );
   const commitMs = performance.now() - commitStart;
   const saved = await stored(page);
   expect(saved.items).toHaveLength(1000);
@@ -115,7 +155,18 @@ test('1000 items and a year of events remain searchable and recoverable', async 
   await page.reload();
   await expect(page.getByRole('button', { name: 'Pantry item 0999', exact: true })).toBeAttached();
   const launchMs = performance.now() - launchStart;
-  console.log(JSON.stringify({ project: info.project.name, items: 1000, events: 8000, bytes: JSON.stringify(data).length, importMs, searchMs, commitMs, launchMs }));
+  console.log(
+    JSON.stringify({
+      project: info.project.name,
+      items: 1000,
+      events: 8000,
+      bytes: JSON.stringify(data).length,
+      importMs,
+      searchMs,
+      commitMs,
+      launchMs,
+    }),
+  );
 });
 
 test('populated desktop and phone layouts keep controls inside the viewport', async ({ page }, info) => {

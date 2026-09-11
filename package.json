@@ -13,7 +13,9 @@
     "preview": "vite preview --host 127.0.0.1 --port 4173",
     "test": "vitest run",
     "test:e2e": "playwright test",
-    "check": "npm run test && npm run build && npm run test:e2e"
+    "check": "npm run test && npm run build && npm run test:e2e",
+    "verify:live": "node scripts/verify-live.mjs",
+    "format": "prettier --write src tests scripts *.ts index.html package.json .github/workflows/deploy.yml"
   },
   "dependencies": {
     "idb": "8.0.3",
@@ -25,6 +27,7 @@
     "@preact/preset-vite": "2.10.6",
     "@types/node": "22.20.2",
     "fake-indexeddb": "6.2.5",
+    "prettier": "3.9.6",
     "sharp": "0.35.4",
     "typescript": "7.0.2",
     "vite": "8.3.0",

@@ -2,13 +2,21 @@
 
 Updated 2026-09-11 from [the planning brief](cupboardcache-planning-brief.md) and the subsequent clarifications: GitHub Pages hosting, a custom domain, installation on the home screen, and one local inventory. This revision is the current development plan.
 
+## Execution status — 2026-09-11
+
+The software work for M0–M4 is implemented. The public repository and GitHub Actions deployment are active at **https://cupboardcache.sciomedes.com/**. Richard's CNAME resolves to `rduncangt.github.io`; GitHub has issued the certificate and HTTPS is enforced. Production-build tests cover desktop Chromium, phone-sized Chromium, and phone-sized WebKit, including unavailable-network relaunch, transactional failures, stale tabs, backup recovery, and safe service-worker updates.
+
+The recommended product choices below are the implementation defaults used when executing this plan: one usual location and earliest expiry, custom units plus g/kg and ml/l, manual flag cancellation, optional keep-on-list for purchases, and physical expiry of quantity events after a configurable 365 days. No account, backend, synchronization, barcode lookup, or batch tracking was added.
+
+The human exit checks are **not yet complete**: actual home-screen installation and file handling on Richard's phone, a day with 20 real items, timed shopping workflows, and the two-shopping-cycle / 30-item accuracy pilot. Follow [PILOT_CHECKLIST.md](PILOT_CHECKLIST.md) before relying on the inventory. Browser emulation does not establish those results.
+
 ## 1. Direction
 
 Build a small inventory app around three actions: find something, correct what is on the shelf, and record a purchase. Prove that these actions are easy enough to maintain a trustworthy inventory before adding barcode lookup.
 
 The confirmed delivery model is a progressive web app (PWA) served by GitHub Pages at `https://cupboardcache.sciomedes.com/`. The user visits it once online and uses the browser's Add to Home Screen or Install action. A service worker caches the application so it can subsequently launch and work offline. The inventory saves automatically in browser storage on the device; JSON files are used for manual export and import. GitHub serves application files and updates, while inventory processing and storage stay on the device.
 
-There is one working inventory, with no account, login, application backend, or synchronization. Use the installed app as the normal working copy. A full container is one unit, so 2.5 jars is valid even in qualitative display mode. Repository: public `rduncangt/CupboardCache`. Richard owns `sciomedes.com` and will make the DNS changes when the first deployment is ready.
+There is one working inventory, with no account, login, application backend, or synchronization. Use the installed app as the normal working copy. A full container is one unit, so 2.5 jars is valid even in qualitative display mode. Repository: public `rduncangt/CupboardCache`. Richard owns `sciomedes.com` and has configured the CNAME for deployment.
 
 Preserve the brief's UUIDs, record timestamps, soft deletes, single persistence layer, sticky resupply flags, manual backups, and bounded history. Keep the full dataset in memory and scan it directly for searching, filtering, and sorting. The exclusions in the brief remain in force; barcode lookup belongs after v1.
 
@@ -65,7 +73,7 @@ When M0 is ready:
 | --- | --- | --- |
 | CNAME | `cupboardcache` | `rduncangt.github.io` |
 
-This sequence and DNS target follow [GitHub's custom-domain instructions](https://docs.github.com/en/pages/configuring-a-custom-domain-for-your-github-pages-site/managing-a-custom-domain-for-your-github-pages-site). DNS and deployment are later implementation steps; this planning update initializes the repository without claiming that the website is already live.
+This sequence and DNS target follow [GitHub's custom-domain instructions](https://docs.github.com/en/pages/configuring-a-custom-domain-for-your-github-pages-site/managing-a-custom-domain-for-your-github-pages-site). The site is now deployed at the custom domain with HTTPS. Account-level TXT domain verification remains an optional ownership-hardening task in Richard's GitHub settings; no additional DNS change is required to use the deployed app.
 
 ## 3. Concrete data model
 
@@ -288,14 +296,14 @@ The smallest **usable** milestone is M1. Its visible item form needs only name, 
 
 The basic scope, one quantity, independent resupply state, simple in-memory search, and early backup requirement are sound. Barcode lookup should wait until the manual workflow survives the pilot. Its later feasibility work must include camera support, lookup coverage, provider terms, and cross-origin API access from the hosted app; cache only personally scanned products and preserve manual entry.
 
-## 7. Remaining decisions and first development task
+## 7. Implementation defaults and remaining human checks
 
-These choices were not settled by the brief. The recommendations above make the plan reviewable; they should not be mistaken for user-confirmed behavior.
+These choices were not separately settled by the brief. Executing the plan used the recommended defaults below; the actual-device and household checks remain to be performed. Revisit a default only if the pilot exposes a concrete problem.
 
 | Decision | Proposed choice | Needed by |
 | --- | --- | --- |
 | Which actual browser/home-screen combination should be verified first? | Test the phone you will use in the supermarket, plus ordinary laptop browser use. Start the working inventory in the installed app. | M0 |
-| When should DNS be connected? | Prepare the Pages deployment and custom-domain setting first; Richard then adds the TXT/CNAME records and we verify HTTPS before real data entry. | M0 |
+| When should DNS be connected? | Done: Richard supplied the CNAME, and the custom domain and enforced HTTPS are configured. | M0 |
 | How should stock spread across locations or expiry batches appear? | One usual location and earliest known expiry per item. Keep batch tracking outside v1 unless this hides distinctions you rely on. | M2 |
 | Which measurement units are needed initially? | Custom count labels plus g/kg and ml/l conversions; add other conversions only for real inventory examples. | M2 |
 | What does never-prompt suppress, and can a need be canceled? | Suppress automatic flags only; allow manual flagging and deliberate cancellation. Preserve an existing flag when enabling never-prompt. | M3 |
@@ -303,4 +311,4 @@ These choices were not settled by the brief. The recommendations above make the 
 | How long is history retained, and can old events be physically removed? | 365 days, configurable, with physical expiry of events as the explicit soft-delete exception. | M4 |
 | What backup habit is sustainable? | Export after the weekly shelf check and before an import or schema upgrade; occasionally verify restoration. | First real data in M1 |
 
-Start development with M0: deploy the smallest installable app shell that saves a sample record automatically and can relaunch from the home screen offline. Connect the custom domain with Richard's DNS change before entering real inventory. Once it passes, build M1 around 20 real pantry items. The first success to optimize for is a quick correction that is still present when the app is reopened.
+Next: install the deployed app on the actual phone and perform the offline and backup checks in the pilot checklist. Then begin with 20 real pantry items and use it through two shopping cycles. The next development changes should address observed entry friction or inventory drift, not add unrelated features.

@@ -6,7 +6,7 @@ Home: **https://cupboardcache.sciomedes.com/**, hosted on GitHub Pages. Install 
 
 ## Project status
 
-The M0–M4 feature set is implemented and automated checks pass. The first deployment is being verified; actual phone installation and the household pilot remain human acceptance gates.
+The M0–M4 feature set is implemented and deployed over HTTPS, with passing automated checks. Actual phone installation and the household pilot remain human acceptance gates: start with the [pilot checklist](PILOT_CHECKLIST.md).
 
 The app supports item editing, search and filters, fractional quantities with spare containers, package conversion, sticky shopping flags, purchases, shopping notes, shelf checks, duplicate merging, archiving/restoration, latest-action Undo, bounded quantity history, and validated JSON backups.
 
@@ -41,6 +41,10 @@ npm run test:e2e
 ```
 
 `npm run check` runs all three checks. Browser tests run against the production build, not the development server. `npm run preview` serves that build locally. Source modules separate the model, pure commands, transactional storage, and UI; production inventory is never used in tests.
+
+`npm run verify:live` checks HTTPS, the manifest/icons, offline relaunch, and backup recovery against the live site in an isolated browser profile containing only synthetic test inventory. Add `-- --wait-for-update` before a deployment to verify an actual old-to-new release. `npm run format` formats the app and test sources.
+
+The initial implementation passes 30 domain/storage tests and 45 browser checks across desktop Chromium, phone-sized Chromium, and phone-sized WebKit. The scale fixture contains 1,000 items and 8,000 history events (about 3.5 MB). In the final local run, warm searches took 0.22–0.65 seconds and reloads took 2.85–3.55 seconds; these are development-machine measurements with concurrent tests, not actual-phone guarantees. Phone installation and the household accuracy/usability gates remain in the pilot checklist.
 
 The PWA needs HTTPS (or localhost for development); opening `index.html` using `file://` is not supported. After installation and caching, normal use needs no network.
 

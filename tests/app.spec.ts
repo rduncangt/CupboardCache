@@ -32,7 +32,9 @@ test('add, search, reconcile, and reopen without losing an item', async ({ page 
   await page.getByRole('button', { name: 'Save actual quantity' }).click();
   await expect(page.getByRole('dialog')).toBeHidden();
   await page.reload();
-  await expect(page.getByRole('button', { name: 'Set actual quantity for Smoked paprika' })).toContainText('0.5');
+  await expect(page.getByRole('button', { name: 'Set actual quantity for Smoked paprika' })).toContainText(
+    '0.5',
+  );
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
 });
 
@@ -74,10 +76,18 @@ test('exports and restores a backup and rejects invalid input', async ({ page })
   const backup = JSON.parse(contents);
   expect(backup.items[0].name).toBe('Coffee');
   expect(backup.items[0].id).toBeTruthy();
-  await page.getByLabel('Choose backup file').setInputFiles({ name: 'invalid.json', mimeType: 'application/json', buffer: Buffer.from('{"schema_version":999}') });
+  await page.getByLabel('Choose backup file').setInputFiles({
+    name: 'invalid.json',
+    mimeType: 'application/json',
+    buffer: Buffer.from('{"schema_version":999}'),
+  });
   await expect(page.getByRole('alert')).toContainText('unsupported');
-  await page.getByLabel('Choose backup file').setInputFiles({ name: 'backup.json', mimeType: 'application/json', buffer: Buffer.from(contents) });
-  await page.getByRole('checkbox', { name: 'Replace the inventory on this device with this backup.' }).check();
+  await page
+    .getByLabel('Choose backup file')
+    .setInputFiles({ name: 'backup.json', mimeType: 'application/json', buffer: Buffer.from(contents) });
+  await page
+    .getByRole('checkbox', { name: 'Replace the inventory on this device with this backup.' })
+    .check();
   await page.getByRole('button', { name: 'Restore backup', exact: true }).click();
   await navigate(page, 'Inventory');
   await expect(page.getByRole('button', { name: 'Coffee', exact: true })).toBeVisible();
@@ -94,26 +104,47 @@ test('walks the shelf and records an actual count', async ({ page }) => {
   await expect(page.getByRole('button', { name: 'Set actual quantity for Rice' })).toContainText('1.5');
 });
 
-test('relaunches offline with cached app and persistent inventory', async ({ page, context, browserName }) => {
+test('relaunches offline with cached app and persistent inventory', async ({
+  page,
+  context,
+  browserName,
+}) => {
   const host = await serveProduction();
   try {
-  await page.goto(host.url);
-  await addItem(page, 'Offline lentils', '2');
-  await page.evaluate(async () => { await navigator.serviceWorker.ready; });
-  await page.reload();
-  await expect.poll(() => page.evaluate(() => !!navigator.serviceWorker.controller)).toBe(true);
-  host.offline();
-  if (browserName !== 'webkit') await context.setOffline(true);
-  await page.close();
-  page = await context.newPage();
-  await page.goto(host.url);
-  await expect(page.getByRole('button', { name: 'Offline lentils', exact: true })).toBeVisible();
-  await page.getByRole('button', { name: 'Add one jar of Offline lentils' }).click();
-  await expect(page.getByRole('button', { name: 'Set actual quantity for Offline lentils' })).toContainText('3');
-  await page.close();
-  page = await context.newPage();
-  await page.goto(host.url);
-  await expect(page.getByRole('button', { name: 'Set actual quantity for Offline lentils' })).toContainText('3');
-  expect(await page.evaluate(async () => { try { await fetch('/uncached-network-probe'); return false; } catch { return true; } })).toBe(true);
-  } finally { await host.close(); }
+    await page.goto(host.url);
+    await addItem(page, 'Offline lentils', '2');
+    await page.evaluate(async () => {
+      await navigator.serviceWorker.ready;
+    });
+    await page.reload();
+    await expect.poll(() => page.evaluate(() => !!navigator.serviceWorker.controller)).toBe(true);
+    host.offline();
+    if (browserName !== 'webkit') await context.setOffline(true);
+    await page.close();
+    page = await context.newPage();
+    await page.goto(host.url);
+    await expect(page.getByRole('button', { name: 'Offline lentils', exact: true })).toBeVisible();
+    await page.getByRole('button', { name: 'Add one jar of Offline lentils' }).click();
+    await expect(page.getByRole('button', { name: 'Set actual quantity for Offline lentils' })).toContainText(
+      '3',
+    );
+    await page.close();
+    page = await context.newPage();
+    await page.goto(host.url);
+    await expect(page.getByRole('button', { name: 'Set actual quantity for Offline lentils' })).toContainText(
+      '3',
+    );
+    expect(
+      await page.evaluate(async () => {
+        try {
+          await fetch('/uncached-network-probe');
+          return false;
+        } catch {
+          return true;
+        }
+      }),
+    ).toBe(true);
+  } finally {
+    await host.close();
+  }
 });

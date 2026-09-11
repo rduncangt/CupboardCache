@@ -7,7 +7,8 @@ const paths = {
   bag: 'M5 7h14l1 14H4L5 7Zm3 0V5a4 4 0 0 1 8 0v2',
   check: 'm5 12 4 4L19 6',
   shelf: 'M3 10h18M3 20h18M5 10V4h5v6m4 0V2h5v8M6 20v-6h5v6m4 0v-6h3v6',
-  settings: 'M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8Zm0-6v3m0 14v3M2 12h3m14 0h3M5 5l2 2m10 10 2 2M5 19l2-2M17 7l2-2',
+  settings:
+    'M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8Zm0-6v3m0 14v3M2 12h3m14 0h3M5 5l2 2m10 10 2 2M5 19l2-2M17 7l2-2',
   plus: 'M12 5v14M5 12h14',
   minus: 'M5 12h14',
   close: 'm6 6 12 12M6 18 18 6',
@@ -32,36 +33,141 @@ const paths = {
 };
 export type IconName = keyof typeof paths;
 export function Icon({ name, size = 20 }: { name: IconName; size?: number }) {
-  return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d={paths[name]} /></svg>;
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.7"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <path d={paths[name]} />
+    </svg>
+  );
 }
 
-export function Modal({ title, children, onClose, busy = false, dirty = false, wide = false }: { title: string; children: ComponentChildren; onClose: () => void; busy?: boolean; dirty?: boolean; wide?: boolean }) {
+export function Modal({
+  title,
+  children,
+  onClose,
+  busy = false,
+  dirty = false,
+  wide = false,
+}: {
+  title: string;
+  children: ComponentChildren;
+  onClose: () => void;
+  busy?: boolean;
+  dirty?: boolean;
+  wide?: boolean;
+}) {
   const ref = useRef<HTMLDialogElement>(null);
   const previous = useRef<HTMLElement | null>(null);
   useEffect(() => {
     previous.current = document.activeElement as HTMLElement;
     ref.current?.showModal();
-    return () => { ref.current?.close(); previous.current?.focus(); };
+    return () => {
+      ref.current?.close();
+      previous.current?.focus();
+    };
   }, []);
-  const close = () => { if (!busy && (!dirty || confirm('Discard your unsaved changes?'))) onClose(); };
-  return <dialog ref={ref} class={`modal ${wide ? 'modal-wide' : ''}`} aria-label={title} onCancel={event => { event.preventDefault(); close(); }} onClick={event => { if (event.target === ref.current) close(); }}>
-    <div class="modal-heading"><h2>{title}</h2><button type="button" class="icon-button" aria-label="Close dialog" onClick={close} disabled={busy}><Icon name="close" /></button></div>
-    {children}
-  </dialog>;
+  const close = () => {
+    if (!busy && (!dirty || confirm('Discard your unsaved changes?'))) onClose();
+  };
+  return (
+    <dialog
+      ref={ref}
+      class={`modal ${wide ? 'modal-wide' : ''}`}
+      aria-label={title}
+      onCancel={(event) => {
+        event.preventDefault();
+        close();
+      }}
+      onClick={(event) => {
+        if (event.target === ref.current) close();
+      }}
+    >
+      <div class="modal-heading">
+        <h2>{title}</h2>
+        <button type="button" class="icon-button" aria-label="Close dialog" onClick={close} disabled={busy}>
+          <Icon name="close" />
+        </button>
+      </div>
+      {children}
+    </dialog>
+  );
 }
 
-export function Field({ label, children, hint }: { label: string; children: ComponentChildren; hint?: string }) {
+export function Field({
+  label,
+  children,
+  hint,
+}: {
+  label: string;
+  children: ComponentChildren;
+  hint?: string;
+}) {
   const id = useId();
-  return <label class="field"><span id={id}>{label}</span>{toChildArray(children).map(child =>
-    isValidElement(child) && typeof child.type === 'string' && /^(input|select|textarea)$/.test(child.type)
-      ? cloneElement(child, { 'aria-labelledby': id, 'aria-describedby': hint ? `${id}-hint` : undefined } as Record<string, string | undefined>)
-      : child
-  )}{hint && <small id={`${id}-hint`}>{hint}</small>}</label>;
+  return (
+    <label class="field">
+      <span id={id}>{label}</span>
+      {toChildArray(children).map((child) =>
+        isValidElement(child) &&
+        typeof child.type === 'string' &&
+        /^(input|select|textarea)$/.test(child.type)
+          ? cloneElement(child, {
+              'aria-labelledby': id,
+              'aria-describedby': hint ? `${id}-hint` : undefined,
+            } as Record<string, string | undefined>)
+          : child,
+      )}
+      {hint && <small id={`${id}-hint`}>{hint}</small>}
+    </label>
+  );
 }
 
-export function EmptyState({ icon = 'cupboard', title, children, action }: { icon?: IconName; title: string; children: ComponentChildren; action?: ComponentChildren }) {
-  return <div class="empty-state"><div class="empty-illustration"><Icon name={icon} size={54} /><span class="empty-sprig"><Icon name="leaf" size={25} /></span></div><h2>{title}</h2><p>{children}</p>{action}</div>;
+export function EmptyState({
+  icon = 'cupboard',
+  title,
+  children,
+  action,
+}: {
+  icon?: IconName;
+  title: string;
+  children: ComponentChildren;
+  action?: ComponentChildren;
+}) {
+  return (
+    <div class="empty-state">
+      <div class="empty-illustration">
+        <Icon name={icon} size={54} />
+        <span class="empty-sprig">
+          <Icon name="leaf" size={25} />
+        </span>
+      </div>
+      <h2>{title}</h2>
+      <p>{children}</p>
+      {action}
+    </div>
+  );
 }
 
-export const ErrorMessage = ({ message }: { message: string | null }) => message ? <div class="inline-error" role="alert"><Icon name="alert" /><span>{message}</span></div> : null;
-export const dateLabel = (date: string | null, includeTime = false) => date ? new Date(date.length === 10 ? `${date}T12:00:00` : date).toLocaleDateString(undefined, { month: 'short', day: 'numeric', ...(includeTime ? { hour: 'numeric', minute: '2-digit' } as const : {}) }) : 'Not checked yet';
+export const ErrorMessage = ({ message }: { message: string | null }) =>
+  message ? (
+    <div class="inline-error" role="alert">
+      <Icon name="alert" />
+      <span>{message}</span>
+    </div>
+  ) : null;
+export const dateLabel = (date: string | null, includeTime = false) =>
+  date
+    ? new Date(date.length === 10 ? `${date}T12:00:00` : date).toLocaleDateString(undefined, {
+        month: 'short',
+        day: 'numeric',
+        ...(includeTime ? ({ hour: 'numeric', minute: '2-digit' } as const) : {}),
+      })
+    : 'Not checked yet';

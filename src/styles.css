@@ -491,7 +491,7 @@ textarea::placeholder {
   font-size: 10px;
   margin-top: 5px;
 }
-.item-description {
+.item-notes {
   font-size: 11px;
   line-height: 1.6;
   color: var(--muted);

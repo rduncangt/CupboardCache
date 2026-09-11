@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { legacyInventorySchema } from './legacy';
 
 const quantity = z.number().finite().min(0).max(1_000_000_000);
 const storedQuantity = quantity.refine(
@@ -18,25 +19,30 @@ export const packageSchema = z.strictObject({
 });
 export const inputSchema = z.strictObject({
   name: z.string().trim().min(1, 'Give this item a name.').max(200),
-  description: z.string().max(2000).nullable(),
+  notes: z.string().max(2000),
   aliases: z.array(z.string().trim().min(1).max(200)).max(100),
   category: z.string().trim().min(1).max(100).nullable(),
   location: z.string().trim().min(1).max(100).nullable(),
   quantity,
   unit: z.string().trim().min(1, 'Choose a unit.').max(40),
   package_size: packageSchema.nullable(),
-  display_mode: z.enum(['numeric', 'qualitative']),
-  expires_on: z.iso.date().nullable(),
-  resupply_threshold: quantity.nullable(),
+  display_mode: z.enum(['number', 'ladder']),
+  expiry: z.iso.date().nullable(),
+  threshold: quantity.nullable(),
   never_prompt: z.boolean(),
+  restock_amount: quantity.positive(),
+  barcodes: z.array(z.string().min(1).max(200)).max(100),
 });
 const itemSchema = inputSchema.extend({
   ...meta,
   quantity: storedQuantity,
-  resupply_threshold: storedQuantity.nullable(),
-  resupply_flag: z.boolean(),
-  last_checked_at: timestamp.nullable(),
-  merged_into_id: z.uuid().nullable(),
+  threshold: storedQuantity.nullable(),
+  restock_amount: storedQuantity.refine((value) => value > 0, 'Restock amount must be greater than zero.'),
+  flagged: z.boolean(),
+  flag_source: z.string().min(1).max(40).nullable(),
+  flagged_at: timestamp.nullable(),
+  verified_at: timestamp.nullable(),
+  merged_into: z.uuid().nullable(),
 });
 const snapshotSchema = z.strictObject({
   quantity: storedQuantity,
@@ -60,16 +66,26 @@ const extraSchema = z.strictObject({
 });
 const settingsSchema = z.strictObject({
   ...meta,
-  history_retention_days: z.number().int().min(1).max(36500),
+  retention_days: z.number().int().min(1).max(36500),
+  last_export_at: timestamp.nullable(),
+  writes_since_export: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+  device_label: z.string().max(200),
 });
 const dataSchema = z.strictObject({
   ...meta,
-  format: z.literal('cupboardcache'),
+  app: z.literal('ambry'),
   schema_version: z.literal(1),
+  exported_at: timestamp.nullable(),
+  device_label: z.string().max(200),
+  counts: z.strictObject({
+    items: z.number().int().nonnegative(),
+    events: z.number().int().nonnegative(),
+    extras: z.number().int().nonnegative(),
+  }),
   revision: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
   items: z.array(itemSchema).max(20000),
-  quantity_events: z.array(eventSchema).max(200000),
-  shopping_extras: z.array(extraSchema).max(20000),
+  events: z.array(eventSchema).max(200000),
+  extras: z.array(extraSchema).max(20000),
   settings: settingsSchema,
 });
 
@@ -88,30 +104,41 @@ export function metadata(now = new Date().toISOString()): RecordMeta {
 export function emptyInventory(now = new Date().toISOString()): InventoryData {
   return {
     ...metadata(now),
-    format: 'cupboardcache',
+    app: 'ambry',
     schema_version: 1,
+    exported_at: null,
+    device_label: 'this device',
+    counts: { items: 0, events: 0, extras: 0 },
     revision: 0,
     items: [],
-    quantity_events: [],
-    shopping_extras: [],
-    settings: { ...metadata(now), history_retention_days: 365 },
+    events: [],
+    extras: [],
+    settings: {
+      ...metadata(now),
+      retention_days: 365,
+      last_export_at: null,
+      writes_since_export: 0,
+      device_label: 'this device',
+    },
   };
 }
 
 export function newItemInput(): ItemInput {
   return {
     name: '',
-    description: null,
+    notes: '',
     aliases: [],
     category: null,
     location: 'Pantry',
     quantity: 1,
-    unit: 'item',
+    unit: 'count',
     package_size: null,
-    display_mode: 'numeric',
-    expires_on: null,
-    resupply_threshold: null,
+    display_mode: 'number',
+    expiry: null,
+    threshold: null,
     never_prompt: false,
+    restock_amount: 1,
+    barcodes: [],
   };
 }
 
@@ -121,9 +148,11 @@ export function itemInput(item: Item): ItemInput {
     created_at: _created,
     updated_at: _updated,
     deleted_at: _deleted,
-    resupply_flag: _flag,
-    last_checked_at: _checked,
-    merged_into_id: _merged,
+    flagged: _flag,
+    flag_source: _source,
+    flagged_at: _flagged,
+    verified_at: _checked,
+    merged_into: _merged,
     ...input
   } = item;
   return input;
@@ -140,13 +169,7 @@ export function validateInventory(value: unknown): InventoryData {
   }
   const data = result.data;
   const ids = new Set<string>();
-  for (const record of [
-    data,
-    data.settings,
-    ...data.items,
-    ...data.quantity_events,
-    ...data.shopping_extras,
-  ]) {
+  for (const record of [data, data.settings, ...data.items, ...data.events, ...data.extras]) {
     if (ids.has(record.id)) throw new Error('The backup contains duplicate record IDs.');
     ids.add(record.id);
     if (Date.parse(record.updated_at) < Date.parse(record.created_at))
@@ -161,23 +184,140 @@ export function validateInventory(value: unknown): InventoryData {
         'An item counted in g, kg, ml, or l must not also redefine that unit with a package size.',
       );
     const visited = new Set([item.id]);
-    let target = item.merged_into_id;
+    let target = item.merged_into;
     if (target && !item.deleted_at) throw new Error('A merged item must be archived.');
     while (target) {
       const next = items.get(target);
       if (!next || visited.has(target)) throw new Error('The backup contains an invalid merge reference.');
       visited.add(target);
-      target = next.merged_into_id;
+      target = next.merged_into;
     }
   }
-  for (const event of data.quantity_events) {
+  for (const event of data.events) {
     if (!items.has(event.item_id) || (event.related_item_id && !items.has(event.related_item_id))) {
       throw new Error('An inventory event refers to a missing item.');
     }
     if (event.reason !== 'initial' && !event.before)
       throw new Error('A quantity event is missing its previous amount.');
   }
-  return data;
+  return { ...data, counts: inventoryCounts(data) };
+}
+
+export function inventoryCounts(
+  data: Pick<InventoryData, 'items' | 'events' | 'extras'>,
+): InventoryData['counts'] {
+  return { items: data.items.length, events: data.events.length, extras: data.extras.length };
+}
+
+// There is one write format. Older CupboardCache files are accepted only at this read boundary.
+export function readInventory(
+  value: unknown,
+  now = new Date().toISOString(),
+): { data: InventoryData; migrated: boolean } {
+  if (value && typeof value === 'object' && 'schema_version' in value && value.schema_version !== 1) {
+    throw new Error('This backup uses an unsupported version. Your current inventory has not changed.');
+  }
+  if (value && typeof value === 'object' && 'format' in value && value.format === 'cupboardcache') {
+    const parsed = legacyInventorySchema.safeParse(value);
+    if (!parsed.success) throw new Error(`Invalid legacy inventory: ${parsed.error.issues[0].message}`);
+    const old = parsed.data;
+    const { format: _format, quantity_events, shopping_extras, items, settings, ...document } = old;
+    const { history_retention_days, ...settingsMeta } = settings;
+    const data = validateInventory({
+      ...document,
+      app: 'ambry',
+      exported_at: null,
+      device_label: 'this device',
+      counts: { items: items.length, events: quantity_events.length, extras: shopping_extras.length },
+      items: items.map(
+        ({
+          description,
+          resupply_threshold,
+          resupply_flag,
+          last_checked_at,
+          merged_into_id,
+          expires_on,
+          display_mode,
+          ...item
+        }) => ({
+          ...item,
+          notes: description ?? '',
+          threshold: resupply_threshold,
+          flagged: resupply_flag,
+          verified_at: last_checked_at,
+          merged_into: merged_into_id,
+          expiry: expires_on,
+          display_mode: display_mode === 'numeric' ? 'number' : 'ladder',
+          flag_source: null,
+          flagged_at: null,
+          restock_amount: 1,
+          barcodes: [],
+        }),
+      ),
+      events: quantity_events,
+      extras: shopping_extras,
+      settings: {
+        ...settingsMeta,
+        retention_days: history_retention_days,
+        last_export_at: null,
+        writes_since_export: 0,
+        device_label: 'this device',
+      },
+    });
+    return { data, migrated: true };
+  }
+  // Original starter files omit document/settings metadata. Add only those missing fields.
+  if (
+    value &&
+    typeof value === 'object' &&
+    'app' in value &&
+    value.app === 'ambry' &&
+    'settings' in value &&
+    value.settings &&
+    typeof value.settings === 'object'
+  ) {
+    const record = value as Record<string, unknown>;
+    const settings = value.settings as Record<string, unknown>;
+    const at = typeof record.exported_at === 'string' ? record.exported_at : now;
+    const addMeta = (source: Record<string, unknown>) => ({
+      id: source.id === undefined ? crypto.randomUUID() : source.id,
+      created_at: source.created_at === undefined ? at : source.created_at,
+      updated_at: source.updated_at === undefined ? at : source.updated_at,
+      deleted_at: source.deleted_at === undefined ? null : source.deleted_at,
+      ...source,
+    });
+    const migrated =
+      record.revision === undefined ||
+      [record, settings].some((source) =>
+        ['id', 'created_at', 'updated_at', 'deleted_at'].some((key) => source[key] === undefined),
+      );
+    return {
+      data: validateInventory({
+        ...addMeta(record),
+        revision: record.revision === undefined ? 0 : record.revision,
+        settings: addMeta(settings),
+      }),
+      migrated,
+    };
+  }
+  return { data: validateInventory(value), migrated: false };
+}
+
+export function exportedInventory(data: InventoryData, now = new Date().toISOString()): InventoryData {
+  const updated = (created: string) => (Date.parse(now) < Date.parse(created) ? created : now);
+  return validateInventory({
+    ...data,
+    updated_at: updated(data.created_at),
+    exported_at: now,
+    device_label: data.settings.device_label,
+    counts: inventoryCounts(data),
+    settings: {
+      ...data.settings,
+      updated_at: updated(data.settings.created_at),
+      last_export_at: now,
+      writes_since_export: 0,
+    },
+  });
 }
 
 export function parseBackup(text: string): InventoryData {
@@ -187,7 +327,7 @@ export function parseBackup(text: string): InventoryData {
   } catch {
     throw new Error('This file is not valid JSON. Choose a CupboardCache backup.');
   }
-  return validateInventory(value);
+  return readInventory(value).data;
 }
 
 export function normalize(text: string): string {
@@ -200,7 +340,7 @@ export function normalize(text: string): string {
 }
 
 export function matches(item: Item, search: string): boolean {
-  const haystack = normalize([item.name, ...item.aliases, item.description ?? ''].join(' '));
+  const haystack = normalize([item.name, ...item.aliases, item.notes ?? ''].join(' '));
   return normalize(search)
     .split(/\s+/)
     .filter(Boolean)
@@ -214,7 +354,7 @@ export function duplicates(items: Item[], name: string, excludeId?: string): Ite
     .filter(
       (item) =>
         item.id !== excludeId &&
-        !item.merged_into_id &&
+        !item.merged_into &&
         [item.name, ...item.aliases].some((alias) => {
           const other = normalize(alias).split(' ').filter(Boolean);
           const overlap = tokens.filter((token) => other.includes(token)).length;
@@ -243,8 +383,8 @@ export const snapshot = (item: Item) => ({
   unit: item.unit,
   package_size: item.package_size ? { ...item.package_size } : null,
 });
-export const isLow = (item: Pick<Item, 'quantity' | 'resupply_threshold'>) =>
-  item.resupply_threshold !== null && item.quantity <= item.resupply_threshold;
+export const isLow = (item: Pick<Item, 'quantity' | 'threshold'>) =>
+  item.threshold !== null && item.quantity <= item.threshold;
 export const spareContainers = (q: number) => Math.max(Math.ceil(q) - 1, 0);
 export const setOpenContainer = (q: number, fill: number) => roundQuantity(spareContainers(q) + fill);
 
@@ -338,6 +478,5 @@ export function packageDisplay(item: Item): string | null {
 }
 
 export function retentionCount(data: InventoryData, days: number, now = Date.now()): number {
-  return data.quantity_events.filter((event) => Date.parse(event.created_at) < now - days * 86_400_000)
-    .length;
+  return data.events.filter((event) => Date.parse(event.created_at) < now - days * 86_400_000).length;
 }

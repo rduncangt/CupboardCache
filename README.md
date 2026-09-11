@@ -11,6 +11,7 @@ The M0–M4 feature set is implemented and deployed over HTTPS, with passing aut
 The app supports item editing, search and filters, fractional quantities with spare containers, package conversion, sticky shopping flags, purchases, shopping notes, shelf checks, duplicate merging, archiving/restoration, latest-action Undo, bounded quantity history, and validated JSON backups.
 
 - [Development plan](DEVELOPMENT_PLAN.md): architecture, data model, milestones, and implementation assumptions.
+- [Data format](DATA_FORMAT.md): the preferred starter-pantry field names, metadata additions, and compatibility with older backups.
 - [Original planning brief](cupboardcache-planning-brief.md): product goals and initial constraints. Later hosting and installation clarifications are incorporated in the development plan.
 
 ## Use it
@@ -21,6 +22,8 @@ The app supports item editing, search and filters, fractional quantities with sp
 4. Export a backup in Settings and verify that you can import it. Import replaces this device's inventory after review; it does not merge copies.
 
 The working data is browser-managed storage, not a live JSON file in your Documents folder. Exports are ordinary dated JSON files. Clearing site data, changing browsers/origins, or losing the device can lose the working inventory. Installation is not a backup. Keep occasional exports somewhere safe, preferably off the working device.
+
+Storage and backups use the preferred `starter-pantry.json` format (`app: "ambry"`, `schema_version: 1`). Existing CupboardCache inventories migrate automatically without changing item IDs or stock; old backups remain importable. The local starter file can be imported directly in Settings and is not published with the app.
 
 Use **Bought** to add purchased stock and clear its shopping flag. **Set actual** corrects the shelf count but preserves an existing shopping need. Qualitative mode keeps spares: 2.5 jars is two full jars plus half; **Out** affects the open container, while **All out** sets the entire stock to zero.
 
@@ -44,7 +47,7 @@ npm run test:e2e
 
 `npm run verify:live` checks HTTPS, the manifest/icons, offline relaunch, and backup recovery against the live site in an isolated browser profile containing only synthetic test inventory. Add `-- --wait-for-update` before a deployment to verify an actual old-to-new release. `npm run format` formats the app and test sources.
 
-The initial implementation passes 30 domain/storage tests and 45 browser checks across desktop Chromium, phone-sized Chromium, and phone-sized WebKit. The scale fixture contains 1,000 items and 8,000 history events (about 3.5 MB). In the final local run, warm searches took 0.22–0.65 seconds and reloads took 2.85–3.55 seconds; these are development-machine measurements with concurrent tests, not actual-phone guarantees. Phone installation and the household accuracy/usability gates remain in the pilot checklist.
+Verification covers 40 public domain/storage/migration tests and 54 browser checks across desktop Chromium, phone-sized Chromium, and phone-sized WebKit. An additional local test validates the private starter file when present; it is skipped in CI because that file is not published. The scale fixture contains 1,000 items and 8,000 history events (about 3.6 MB). Phone installation and the household accuracy/usability gates remain in the pilot checklist.
 
 The PWA needs HTTPS (or localhost for development); opening `index.html` using `file://` is not supported. After installation and caching, normal use needs no network.
 

@@ -4,6 +4,7 @@ import { useRegisterSW } from 'virtual:pwa-register/preact';
 import {
   canUndo,
   execute,
+  exportInventory,
   loadInventory,
   readStoredInventory,
   recoverInventory,
@@ -17,6 +18,8 @@ import {
   number,
   packageDisplay,
   parseBackup,
+  readInventory,
+  exportedInventory,
   qualitative,
   type InventoryData,
   type Item,
@@ -219,12 +222,16 @@ function App() {
     try {
       let saved: unknown;
       try {
-        const current = await loadInventory();
-        setData(current);
+        const current = await exportInventory();
         saved = current;
       } catch {
         saved = await readStoredInventory();
         if (saved === undefined) throw new Error('There is no stored inventory to export.');
+        try {
+          saved = exportedInventory(readInventory(saved).data);
+        } catch {
+          /* Preserve unreadable raw data for emergency recovery; never silently discard it. */
+        }
       }
       const url = URL.createObjectURL(
         new Blob([JSON.stringify(saved, null, 2)], { type: 'application/json' }),
@@ -259,8 +266,8 @@ function App() {
     }
   };
   const items = data?.items.filter((item) => !item.deleted_at) ?? [];
-  const shopping = items.filter((item) => item.resupply_flag);
-  const extras = data?.shopping_extras.filter((extra) => !extra.deleted_at) ?? [];
+  const shopping = items.filter((item) => item.flagged);
+  const extras = data?.extras.filter((extra) => !extra.deleted_at) ?? [];
   const shoppingCount = shopping.length + extras.filter((extra) => !extra.completed_at).length;
   const locations = [...new Set(items.flatMap((item) => (item.location ? [item.location] : [])))].sort();
   const categories = [...new Set(items.flatMap((item) => (item.category ? [item.category] : [])))].sort();
@@ -274,9 +281,9 @@ function App() {
     )
     .sort((a, b) =>
       sort === 'checked'
-        ? (a.last_checked_at ?? '').localeCompare(b.last_checked_at ?? '') || a.name.localeCompare(b.name)
+        ? (a.verified_at ?? '').localeCompare(b.verified_at ?? '') || a.name.localeCompare(b.name)
         : sort === 'expiry'
-          ? (a.expires_on ?? '9999').localeCompare(b.expires_on ?? '9999') || a.name.localeCompare(b.name)
+          ? (a.expiry ?? '9999').localeCompare(b.expiry ?? '9999') || a.name.localeCompare(b.name)
           : a.name.localeCompare(b.name),
     );
   const modalItem = modal && 'id' in modal ? data?.items.find((item) => item.id === modal.id) : undefined;
@@ -529,7 +536,7 @@ function App() {
                       {filtered.map((item) => (
                         <article class={`item-card ${item.quantity === 0 ? 'item-out' : ''}`} key={item.id}>
                           <div class="item-card-top">
-                            <span class={`item-symbol ${item.display_mode === 'qualitative' ? 'warm' : ''}`}>
+                            <span class={`item-symbol ${item.display_mode === 'ladder' ? 'warm' : ''}`}>
                               <Icon name={locationIcon(item.location)} size={24} />
                             </span>
                             <div class="item-name">
@@ -549,7 +556,7 @@ function App() {
                               <Icon name="more" />
                             </button>
                           </div>
-                          {item.description && <p class="item-description">{item.description}</p>}
+                          {item.notes && <p class="item-notes">{item.notes}</p>}
                           <div class="item-card-bottom">
                             <button
                               class="quantity-button"
@@ -557,12 +564,12 @@ function App() {
                               aria-label={`Set actual quantity for ${item.name}`}
                             >
                               <strong>
-                                {item.display_mode === 'qualitative'
+                                {item.display_mode === 'ladder'
                                   ? qualitative(item.quantity)
                                   : number(item.quantity)}
                               </strong>
                               <span>
-                                {item.display_mode === 'qualitative'
+                                {item.display_mode === 'ladder'
                                   ? `${number(item.quantity)} ${item.unit}`
                                   : item.unit}
                                 {item.package_size && ` · ${packageDisplay(item)}`}
@@ -593,38 +600,38 @@ function App() {
                             </div>
                           </div>
                           <div class="item-card-footer">
-                            {item.expires_on ? (
+                            {item.expiry ? (
                               <span>
                                 <Icon name="clock" size={13} />
-                                {dateLabel(item.expires_on)}
+                                {dateLabel(item.expiry)}
                               </span>
                             ) : (
                               <span>
                                 {item.quantity === 0
                                   ? 'Out · ready to restock'
-                                  : item.last_checked_at
-                                    ? `Checked ${dateLabel(item.last_checked_at)}`
+                                  : item.verified_at
+                                    ? `Checked ${dateLabel(item.verified_at)}`
                                     : 'Not checked yet'}
                               </span>
                             )}
                             <button
-                              class={`shopping-toggle ${item.resupply_flag ? 'flagged' : ''}`}
+                              class={`shopping-toggle ${item.flagged ? 'flagged' : ''}`}
                               aria-label={
-                                item.resupply_flag
+                                item.flagged
                                   ? `Remove ${item.name} from shopping`
                                   : `Add ${item.name} to shopping`
                               }
-                              aria-pressed={item.resupply_flag}
+                              aria-pressed={item.flagged}
                               disabled={busy}
                               onClick={() =>
                                 void run(
-                                  { type: 'flag', id: item.id, value: !item.resupply_flag },
-                                  item.resupply_flag ? 'Shopping need canceled' : 'Added to shopping',
+                                  { type: 'flag', id: item.id, value: !item.flagged },
+                                  item.flagged ? 'Shopping need canceled' : 'Added to shopping',
                                 )
                               }
                             >
-                              <Icon name={item.resupply_flag ? 'check' : 'bag'} size={14} />
-                              {item.resupply_flag ? 'On your list' : 'Add to list'}
+                              <Icon name={item.flagged ? 'check' : 'bag'} size={14} />
+                              {item.flagged ? 'On your list' : 'Add to list'}
                             </button>
                           </div>
                         </article>
@@ -886,7 +893,7 @@ function App() {
               <span>active items</span>
             </div>
             <div>
-              <strong>{modal.candidate.quantity_events.length}</strong>
+              <strong>{modal.candidate.events.length}</strong>
               <span>history events</span>
             </div>
             <div>

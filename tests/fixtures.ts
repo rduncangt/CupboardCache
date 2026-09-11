@@ -21,12 +21,14 @@ export function fixture(count = 8, eventCount = count): InventoryData {
     unit: 'jar',
     category: index % 2 ? 'Everyday essentials' : 'Cooking',
     location: index === 2 ? 'Fridge' : index === 7 ? 'Freezer' : 'Pantry',
-    display_mode: index % 3 === 0 ? ('qualitative' as const) : ('numeric' as const),
-    resupply_flag: index % 3 === 1,
-    last_checked_at: null,
-    merged_into_id: null,
+    display_mode: index % 3 === 0 ? ('ladder' as const) : ('number' as const),
+    flagged: index % 3 === 1,
+    flag_source: null,
+    flagged_at: null,
+    verified_at: null,
+    merged_into: null,
   }));
-  data.quantity_events = Array.from({ length: eventCount }, (_, index) => {
+  data.events = Array.from({ length: eventCount }, (_, index) => {
     const item = data.items[index % count];
     return {
       ...metadata(new Date(Date.now() - (index % 360) * 86_400_000).toISOString()),
@@ -42,7 +44,7 @@ export function fixture(count = 8, eventCount = count): InventoryData {
   return data;
 }
 
-export async function importFixture(page: Page, data: InventoryData) {
+export async function importFixture(page: Page, data: unknown) {
   await page.getByLabel('Choose backup file').setInputFiles({
     name: 'test-inventory.json',
     mimeType: 'application/json',

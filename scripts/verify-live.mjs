@@ -78,6 +78,13 @@ try {
   await page.getByRole('button', { name: 'Export backup', exact: true }).click();
   const contents = await readFile(await (await download).path(), 'utf8');
   const backup = JSON.parse(contents);
+  assert.equal(backup.app, 'ambry');
+  assert.equal('format' in backup, false);
+  assert.equal('quantity_events' in backup, false);
+  assert.equal(typeof backup.items[0].notes, 'string');
+  assert.equal(typeof backup.items[0].flagged, 'boolean');
+  assert.ok(Array.isArray(backup.events));
+  assert.ok(Array.isArray(backup.extras));
   assert.equal(backup.items[0].quantity, Number(expected));
   // Deliberately clear only this script's synthetic inventory, then recover its file.
   await page.evaluate(

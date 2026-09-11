@@ -1,6 +1,13 @@
 import { openDB, type DBSchema } from 'idb';
 import { applyCommand, undoCommand, type Command } from './commands';
-import { emptyInventory, retentionCount, validateInventory, type InventoryData } from './model';
+import {
+  emptyInventory,
+  exportedInventory,
+  readInventory,
+  retentionCount,
+  validateInventory,
+  type InventoryData,
+} from './model';
 
 interface Database extends DBSchema {
   inventory: { key: string; value: InventoryData };
@@ -47,13 +54,19 @@ export function loadInventory(): Promise<InventoryData> {
     const tx = database.transaction('inventory', 'readwrite');
     try {
       const saved = await tx.store.get('current');
-      let data = saved === undefined ? emptyInventory() : validateInventory(saved);
-      if (retentionCount(data, data.settings.history_retention_days)) {
+      const decoded =
+        saved === undefined ? { data: emptyInventory(), migrated: false } : readInventory(saved);
+      let data = decoded.migrated ? { ...decoded.data, revision: decoded.data.revision + 1 } : decoded.data;
+      let changed = saved === undefined || decoded.migrated;
+      if (decoded.migrated) undo = null;
+      if (retentionCount(data, data.settings.retention_days)) {
         data = applyCommand(data, { type: 'prune' });
         undo = null;
-        await tx.store.put(data, 'current');
-      } else if (saved === undefined) await tx.store.put(data, 'current');
+        changed = true;
+      }
+      if (changed) await tx.store.put(validateInventory(data), 'current');
       await tx.done;
+      if (decoded.migrated) channel?.postMessage(data.revision);
       return data;
     } catch (error) {
       try {
@@ -77,7 +90,7 @@ async function write(
   const database = await db();
   const tx = database.transaction('inventory', 'readwrite');
   try {
-    const current = validateInventory(await tx.store.get('current'));
+    const current = readInventory(await tx.store.get('current')).data;
     if (current.revision !== expectedRevision)
       throw new Error(
         'Your inventory changed in another window. Close this dialog, refresh the inventory, and reopen the item before retrying.',
@@ -139,6 +152,33 @@ export async function readStoredInventory(): Promise<unknown> {
   }
 }
 
+export async function exportInventory(): Promise<InventoryData> {
+  await loadInventory();
+  return serial(async () => {
+    const database = await db();
+    const tx = database.transaction('inventory', 'readwrite');
+    let snapshot: InventoryData | undefined;
+    try {
+      snapshot = exportedInventory(validateInventory(await tx.store.get('current')));
+      // Export bookkeeping does not invalidate open forms or Undo: stock did not change.
+      await tx.store.put(snapshot, 'current');
+      await tx.done;
+      return snapshot;
+    } catch (error) {
+      try {
+        tx.abort();
+      } catch {
+        /* A failed bookkeeping write must not prevent backup recovery. */
+      }
+      await tx.done.catch(() => undefined);
+      if (snapshot) return snapshot;
+      throw error;
+    } finally {
+      database.close();
+    }
+  });
+}
+
 export function recoverInventory(candidate: InventoryData): Promise<InventoryData> {
   return serial(async () => {
     const checked = validateInventory(candidate);
@@ -148,7 +188,7 @@ export function recoverInventory(candidate: InventoryData): Promise<InventoryDat
       const previous = await tx.store.get('current');
       let valid = false;
       try {
-        validateInventory(previous);
+        readInventory(previous);
         valid = true;
       } catch {
         /* Recovery is only for an unreadable document. */

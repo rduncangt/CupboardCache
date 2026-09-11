@@ -13,17 +13,17 @@ test('editing metadata preserves the existing display mode and package measure',
   await importFixture(page, data);
   await page.getByRole('button', { name: 'Smoked paprika', exact: true }).click();
   await page.getByRole('button', { name: 'Edit details' }).click();
-  await expect(page.getByLabel('Quantity display', { exact: true })).toHaveValue('qualitative');
+  await expect(page.getByLabel('Quantity display', { exact: true })).toHaveValue('ladder');
   await expect(page.getByLabel('Package measure', { exact: true })).toHaveValue('kg');
-  await page.getByLabel('Description', { exact: true }).fill('Refill from the market');
+  await page.getByLabel('Notes', { exact: true }).fill('Refill from the market');
   await page.getByRole('button', { name: 'Save changes', exact: true }).click();
   await expect(page.getByRole('dialog')).toBeHidden();
   expect((await stored(page)).items[0]).toMatchObject({
     quantity: 2.5,
-    display_mode: 'qualitative',
+    display_mode: 'ladder',
     package_size: { amount: 1, unit: 'kg' },
     never_prompt: true,
-    description: 'Refill from the market',
+    notes: 'Refill from the market',
   });
 });
 
@@ -46,8 +46,8 @@ test('qualitative controls preserve spare jars and merge can be undone', async (
   await page.getByRole('button', { name: 'Merge into Smoked paprika' }).click();
   await expect(page.getByRole('dialog')).toBeHidden();
   const merged = await stored(page);
-  expect(merged.items[0]).toMatchObject({ quantity: 2.5, resupply_flag: true, aliases: ['Plain flour'] });
-  expect(merged.items[1].merged_into_id).toBe(data.items[0].id);
+  expect(merged.items[0]).toMatchObject({ quantity: 2.5, flagged: true, aliases: ['Plain flour'] });
+  expect(merged.items[1].merged_into).toBe(data.items[0].id);
   await page.getByRole('button', { name: 'Undo last action' }).click();
   await expect(page.getByRole('button', { name: 'Plain flour', exact: true })).toBeVisible();
   expect((await stored(page)).items[0].quantity).toBe(2);
@@ -59,7 +59,7 @@ test('package entry and explicit unit conversion preserve actual stock', async (
     name: 'Flour',
     unit: 'bag',
     package_size: { amount: 1, unit: 'kg' },
-    resupply_threshold: 1,
+    threshold: 1,
   });
   await importFixture(page, data);
   await page.getByRole('button', { name: 'Set actual quantity for Flour' }).click();
@@ -79,8 +79,8 @@ test('package entry and explicit unit conversion preserve actual stock', async (
     quantity: 432,
     unit: 'g',
     package_size: null,
-    resupply_threshold: 1000,
-    resupply_flag: true,
+    threshold: 1000,
+    flagged: true,
   });
 });
 
@@ -150,7 +150,7 @@ test('1000 items and a year of events remain searchable and recoverable', async 
   const commitMs = performance.now() - commitStart;
   const saved = await stored(page);
   expect(saved.items).toHaveLength(1000);
-  expect(saved.quantity_events).toHaveLength(8001);
+  expect(saved.events).toHaveLength(8001);
   const launchStart = performance.now();
   await page.reload();
   await expect(page.getByRole('button', { name: 'Pantry item 0999', exact: true })).toBeAttached();

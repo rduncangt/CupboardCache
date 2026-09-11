@@ -6,6 +6,7 @@ import {
   snapshot,
   normalize,
   assertUnitConversion,
+  inventoryCounts,
   type InventoryData,
   type Item,
   type ItemInput,
@@ -15,7 +16,7 @@ import {
 
 type MergeFields = Pick<
   ItemInput,
-  'quantity' | 'category' | 'location' | 'expires_on' | 'resupply_threshold' | 'never_prompt'
+  'quantity' | 'category' | 'location' | 'expiry' | 'threshold' | 'never_prompt'
 >;
 export type Command =
   | { type: 'create'; input: ItemInput }
@@ -49,7 +50,7 @@ function event(
   related: string | null = null,
   undoOf: string | null = null,
 ) {
-  data.quantity_events.push({
+  data.events.push({
     ...metadata(now),
     item_id: item.id,
     reason,
@@ -67,14 +68,26 @@ function active(data: InventoryData, id: string): Item {
   return item;
 }
 
-function crossing(before: Item, item: Item): void {
+function setFlag(item: Item, value: boolean, source: string, now: string): void {
+  if (!value) {
+    item.flagged = false;
+    item.flag_source = null;
+    item.flagged_at = null;
+  } else if (!item.flagged) {
+    item.flagged = true;
+    item.flag_source = source;
+    item.flagged_at = now;
+  }
+}
+
+function crossing(before: Item, item: Item, now: string): void {
   if (
     !item.never_prompt &&
-    item.resupply_threshold !== null &&
-    before.quantity > item.resupply_threshold &&
-    item.quantity <= item.resupply_threshold
+    item.threshold !== null &&
+    before.quantity > item.threshold &&
+    item.quantity <= item.threshold
   )
-    item.resupply_flag = true;
+    setFlag(item, true, 'threshold', now);
 }
 
 function normalizedInput(input: ItemInput): ItemInput {
@@ -83,8 +96,8 @@ function normalizedInput(input: ItemInput): ItemInput {
   return {
     ...parsed.data,
     quantity: roundQuantity(parsed.data.quantity),
-    resupply_threshold:
-      parsed.data.resupply_threshold === null ? null : roundQuantity(parsed.data.resupply_threshold),
+    restock_amount: roundQuantity(parsed.data.restock_amount),
+    threshold: parsed.data.threshold === null ? null : roundQuantity(parsed.data.threshold),
   };
 }
 
@@ -100,10 +113,13 @@ export function applyCommand(
       const item: Item = {
         ...input,
         ...metadata(now),
-        resupply_flag: !input.never_prompt && isLow(input),
-        last_checked_at: null,
-        merged_into_id: null,
+        flagged: false,
+        flag_source: null,
+        flagged_at: null,
+        verified_at: null,
+        merged_into: null,
       };
+      if (!input.never_prompt && isLow(input)) setFlag(item, true, 'threshold', now);
       data.items.push(item);
       event(data, item, null, 'initial', now);
       break;
@@ -119,15 +135,11 @@ export function applyCommand(
           'Use the existing stock before changing package size, or convert to a stable unit first.',
         );
       Object.assign(item, input);
-      if (
-        !item.never_prompt &&
-        isLow(item) &&
-        (before.resupply_threshold !== item.resupply_threshold || before.never_prompt)
-      )
-        item.resupply_flag = true;
-      crossing(before, item);
+      if (!item.never_prompt && isLow(item) && (before.threshold !== item.threshold || before.never_prompt))
+        setFlag(item, true, 'threshold', now);
+      crossing(before, item, now);
       if (before.quantity !== item.quantity) {
-        item.last_checked_at = now;
+        item.verified_at = now;
         event(data, item, before, 'recount', now);
       }
       touch(item, now);
@@ -145,9 +157,9 @@ export function applyCommand(
           ? command.quantity
           : item.quantity + (command.type === 'adjust' ? command.delta : command.amount),
       );
-      if (command.type === 'purchase') item.resupply_flag = command.keep;
-      else crossing(before, item);
-      if (command.type === 'actual') item.last_checked_at = now;
+      if (command.type === 'purchase') setFlag(item, command.keep, 'purchase', now);
+      else crossing(before, item, now);
+      if (command.type === 'actual') item.verified_at = now;
       touch(item, now);
       if (item.quantity !== before.quantity)
         event(
@@ -160,7 +172,7 @@ export function applyCommand(
       break;
     }
     case 'flag': {
-      touch(active(data, command.id), now).resupply_flag = command.value;
+      setFlag(touch(active(data, command.id), now), command.value, 'manual', now);
       break;
     }
     case 'delete': {
@@ -170,7 +182,7 @@ export function applyCommand(
     case 'restore': {
       const item = data.items.find((item) => item.id === command.id && item.deleted_at);
       if (!item) throw new Error('This archived item was not found.');
-      if (item.merged_into_id)
+      if (item.merged_into)
         throw new Error(
           'This item was merged. Use Undo immediately after a merge, or correct the surviving item.',
         );
@@ -185,7 +197,7 @@ export function applyCommand(
       assertUnitConversion(item, command.factor, command.unit.trim(), command.package_size);
       const input = normalizedInput({
         name: item.name,
-        description: item.description,
+        notes: item.notes,
         aliases: item.aliases,
         category: item.category,
         location: item.location,
@@ -193,10 +205,11 @@ export function applyCommand(
         unit: command.unit,
         package_size: command.package_size,
         display_mode: item.display_mode,
-        expires_on: item.expires_on,
-        resupply_threshold:
-          item.resupply_threshold === null ? null : roundQuantity(item.resupply_threshold * command.factor),
+        expiry: item.expiry,
+        threshold: item.threshold === null ? null : roundQuantity(item.threshold * command.factor),
         never_prompt: item.never_prompt,
+        restock_amount: roundQuantity(item.restock_amount * command.factor),
+        barcodes: item.barcodes,
       });
       Object.assign(item, input);
       touch(item, now);
@@ -211,11 +224,13 @@ export function applyCommand(
       const fields = command.fields;
       const checked = inputSchema.parse({
         name: target.name,
-        description: target.description,
+        notes: target.notes,
         aliases: target.aliases,
         unit: target.unit,
         package_size: target.package_size,
         display_mode: target.display_mode,
+        restock_amount: target.restock_amount,
+        barcodes: target.barcodes,
         ...fields,
       });
       Object.assign(target, checked, { quantity: roundQuantity(fields.quantity) });
@@ -227,24 +242,29 @@ export function applyCommand(
             .map((alias) => [normalize(alias), alias]),
         ).values(),
       ];
-      target.resupply_flag = target.resupply_flag || source.resupply_flag;
-      target.last_checked_at = now;
+      target.barcodes = [...new Set([...target.barcodes, ...source.barcodes])];
+      if (!target.flagged && source.flagged) {
+        target.flagged = true;
+        target.flag_source = source.flag_source;
+        target.flagged_at = source.flagged_at;
+      }
+      target.verified_at = now;
       touch(target, now);
       touch(source, now);
       source.deleted_at = now;
-      source.merged_into_id = target.id;
+      source.merged_into = target.id;
       event(data, target, before, 'merge', now, source.id);
       break;
     }
     case 'extra-add': {
       const text = command.text.trim();
       if (!text || text.length > 300) throw new Error('Enter a shopping note of 1–300 characters.');
-      data.shopping_extras.push({ ...metadata(now), text, completed_at: null });
+      data.extras.push({ ...metadata(now), text, completed_at: null });
       break;
     }
     case 'extra-complete':
     case 'extra-delete': {
-      const extra = data.shopping_extras.find((extra) => extra.id === command.id && !extra.deleted_at);
+      const extra = data.extras.find((extra) => extra.id === command.id && !extra.deleted_at);
       if (!extra) throw new Error('This shopping note is no longer active.');
       touch(extra, now);
       if (command.type === 'extra-delete') extra.deleted_at = now;
@@ -256,15 +276,20 @@ export function applyCommand(
       if (command.type === 'retention') {
         if (!Number.isInteger(command.days) || command.days < 1 || command.days > 36500)
           throw new Error('Choose between 1 and 36,500 days of history.');
-        touch(data.settings, now).history_retention_days = command.days;
+        touch(data.settings, now).retention_days = command.days;
       }
-      const cutoff = Date.parse(now) - data.settings.history_retention_days * 86_400_000;
-      data.quantity_events = data.quantity_events.filter((event) => Date.parse(event.created_at) >= cutoff);
+      const cutoff = Date.parse(now) - data.settings.retention_days * 86_400_000;
+      data.events = data.events.filter((event) => Date.parse(event.created_at) >= cutoff);
       break;
     }
   }
   touch(data, now);
   data.revision = current.revision + 1;
+  data.counts = inventoryCounts(data);
+  touch(data.settings, now).writes_since_export = Math.min(
+    Number.MAX_SAFE_INTEGER,
+    data.settings.writes_since_export + 1,
+  );
   return data;
 }
 
@@ -286,16 +311,15 @@ export function undoCommand(
       Object.assign(item, old);
       touch(item, now);
       if (!same(snapshot(changed), snapshot(item))) {
-        const original = current.quantity_events.findLast(
-          (event) =>
-            event.item_id === item.id && !before.quantity_events.some((oldEvent) => oldEvent.id === event.id),
+        const original = current.events.findLast(
+          (event) => event.item_id === item.id && !before.events.some((oldEvent) => oldEvent.id === event.id),
         );
         event(data, item, changed, 'undo', now, null, original?.id ?? null);
       }
     }
   }
-  for (const extra of data.shopping_extras) {
-    const old = before.shopping_extras.find((other) => other.id === extra.id);
+  for (const extra of data.extras) {
+    const old = before.extras.find((other) => other.id === extra.id);
     if (!old) {
       extra.deleted_at = now;
       touch(extra, now);
@@ -305,6 +329,11 @@ export function undoCommand(
     }
   }
   data.revision = current.revision + 1;
+  data.counts = inventoryCounts(data);
+  touch(data.settings, now).writes_since_export = Math.min(
+    Number.MAX_SAFE_INTEGER,
+    data.settings.writes_since_export + 1,
+  );
   touch(data, now);
   return data;
 }

@@ -78,16 +78,18 @@ export function ItemEditor({
               unit,
               category: optional(form, 'category'),
               location: optional(form, 'location'),
-              description: optional(form, 'description'),
+              notes: String(form.get('notes') ?? ''),
               aliases: String(form.get('aliases') ?? '')
                 .split(/[,\n]/)
                 .map((value) => value.trim())
                 .filter(Boolean),
               display_mode: String(form.get('display_mode')) as ItemInput['display_mode'],
               package_size: readPackage(form),
-              expires_on: optional(form, 'expires_on'),
-              resupply_threshold: optional(form, 'threshold') === null ? null : numeric(form, 'threshold'),
+              expiry: optional(form, 'expiry'),
+              threshold: optional(form, 'threshold') === null ? null : numeric(form, 'threshold'),
               never_prompt: form.has('never_prompt'),
+              restock_amount: numeric(form, 'restock_amount'),
+              barcodes: initial.barcodes,
             };
             if (
               await commit(
@@ -158,7 +160,7 @@ export function ItemEditor({
               readOnly={!!item}
             />
             <datalist id="units">
-              {['item', 'bag', 'jar', 'can', 'bottle', 'packet', 'stick', 'g', 'kg', 'ml', 'l'].map(
+              {['count', 'item', 'bag', 'jar', 'can', 'bottle', 'packet', 'stick', 'g', 'kg', 'ml', 'l'].map(
                 (unit) => (
                   <option value={unit} />
                 ),
@@ -202,8 +204,8 @@ export function ItemEditor({
             value={displayMode}
             onChange={(event) => setDisplayMode(event.currentTarget.value as ItemInput['display_mode'])}
           >
-            <option value="numeric">Number and unit</option>
-            <option value="qualitative">Full / half / low / out</option>
+            <option value="number">Number and unit</option>
+            <option value="ladder">Full / half / low / out</option>
           </select>
         </Field>
         <div class="form-grid">
@@ -212,14 +214,14 @@ export function ItemEditor({
               name="threshold"
               type="number"
               inputMode="decimal"
-              defaultValue={initial.resupply_threshold ?? ''}
+              defaultValue={initial.threshold ?? ''}
               min="0"
               step="any"
               placeholder="Optional"
             />
           </Field>
           <Field label="Earliest expiry">
-            <input name="expires_on" type="date" defaultValue={initial.expires_on ?? ''} />
+            <input name="expiry" type="date" defaultValue={initial.expiry ?? ''} />
           </Field>
         </div>
         <label class="check-field">
@@ -228,15 +230,15 @@ export function ItemEditor({
         </label>
         <details
           class="form-details"
-          open={!!(initial.description || initial.aliases.length || initial.package_size)}
+          open={!!(initial.notes || initial.aliases.length || initial.package_size)}
         >
           <summary>
-            More details <span>description, aliases & package size</span>
+            More details <span>notes, aliases & package size</span>
           </summary>
-          <Field label="Description">
+          <Field label="Notes">
             <textarea
-              name="description"
-              defaultValue={initial.description ?? ''}
+              name="notes"
+              defaultValue={initial.notes ?? ''}
               placeholder="The details that help you recognize it"
               maxLength={2000}
               rows={2}
@@ -247,6 +249,20 @@ export function ItemEditor({
               name="aliases"
               defaultValue={initial.aliases.join(', ')}
               placeholder="e.g. Paprika, smoked pepper"
+            />
+          </Field>
+          <Field
+            label={`Usual restock amount (${unit})`}
+            hint="Used as the starting amount when recording a purchase."
+          >
+            <input
+              name="restock_amount"
+              type="number"
+              inputMode="decimal"
+              min="0.000001"
+              step="any"
+              required
+              defaultValue={initial.restock_amount}
             />
           </Field>
           <div class="form-grid">
@@ -301,7 +317,7 @@ export function QuantityDialog({
   onClose,
   commit,
 }: Common & { item: Item; mode: 'actual' | 'purchase' }) {
-  const [amount, setAmount] = useState(String(mode === 'actual' ? item.quantity : 1));
+  const [amount, setAmount] = useState(String(mode === 'actual' ? item.quantity : item.restock_amount));
   const [unit, setUnit] = useState(item.unit);
   const [keep, setKeep] = useState(false);
   const [dirty, setDirty] = useState(false);
@@ -313,7 +329,7 @@ export function QuantityDialog({
     /* Validation is shown on submission. */
   }
   const resulting = converted === null ? null : mode === 'purchase' ? item.quantity + converted : converted;
-  const low = resulting !== null && item.resupply_threshold !== null && resulting <= item.resupply_threshold;
+  const low = resulting !== null && item.threshold !== null && resulting <= item.threshold;
   return (
     <Modal
       title={mode === 'purchase' ? 'Record a purchase' : 'Set what is on the shelf'}
@@ -450,34 +466,30 @@ export function ItemDetails({
   for (let pass = 0; pass < data.items.length; pass++) {
     let added = false;
     for (const source of data.items)
-      if (source.merged_into_id && ids.has(source.merged_into_id) && !ids.has(source.id)) {
+      if (source.merged_into && ids.has(source.merged_into) && !ids.has(source.id)) {
         ids.add(source.id);
         added = true;
       }
     if (!added) break;
   }
-  const events = data.quantity_events
+  const events = data.events
     .filter((event) => ids.has(event.item_id))
     .sort((a, b) => b.created_at.localeCompare(a.created_at));
   const [showAll, setShowAll] = useState(false);
-  const retainedEventIds = new Set(data.quantity_events.map((event) => event.id));
+  const retainedEventIds = new Set(data.events.map((event) => event.id));
   return (
     <Modal title={item.name} onClose={onClose} busy={busy}>
       <div class="detail-quantity">
-        <strong>
-          {item.display_mode === 'qualitative' ? qualitative(item.quantity) : number(item.quantity)}
-        </strong>
-        <span>
-          {item.display_mode === 'qualitative' ? `${number(item.quantity)} ${item.unit}` : item.unit}
-        </span>
+        <strong>{item.display_mode === 'ladder' ? qualitative(item.quantity) : number(item.quantity)}</strong>
+        <span>{item.display_mode === 'ladder' ? `${number(item.quantity)} ${item.unit}` : item.unit}</span>
         {item.package_size && <small>{packageDisplay(item)}</small>}
       </div>
       <div class="detail-tags">
         {item.location && <span class="tag">{item.location}</span>}
         {item.category && <span class="tag">{item.category}</span>}
-        {item.resupply_flag && <span class="tag shopping-tag">On your shopping list</span>}
+        {item.flagged && <span class="tag shopping-tag">On your shopping list</span>}
       </div>
-      {item.description && <p>{item.description}</p>}
+      {item.notes && <p>{item.notes}</p>}
       <div class="button-row">
         <button class="button primary" disabled={busy} onClick={() => onQuantity('actual')}>
           Set actual quantity
@@ -486,7 +498,7 @@ export function ItemDetails({
           <Icon name="bag" /> Bought more
         </button>
       </div>
-      {item.display_mode === 'qualitative' && (
+      {item.display_mode === 'ladder' && (
         <div class="qualitative-controls">
           <span>Set open container</span>
           <div>
@@ -521,21 +533,19 @@ export function ItemDetails({
       <dl class="detail-facts">
         <div>
           <dt>Last shelf check</dt>
-          <dd>{dateLabel(item.last_checked_at, true)}</dd>
+          <dd>{dateLabel(item.verified_at, true)}</dd>
         </div>
         <div>
           <dt>Shopping threshold</dt>
           <dd>
-            {item.resupply_threshold === null
-              ? 'Manual only'
-              : `${number(item.resupply_threshold)} ${item.unit}`}
+            {item.threshold === null ? 'Manual only' : `${number(item.threshold)} ${item.unit}`}
             {item.never_prompt && ' · prompts off'}
           </dd>
         </div>
-        {item.expires_on && (
+        {item.expiry && (
           <div>
             <dt>Earliest expiry</dt>
-            <dd>{dateLabel(item.expires_on)}</dd>
+            <dd>{dateLabel(item.expiry)}</dd>
           </div>
         )}
         {item.aliases.length > 0 && (
@@ -554,14 +564,14 @@ export function ItemDetails({
           onClick={async () => {
             if (
               await commit(
-                { type: 'flag', id: item.id, value: !item.resupply_flag },
-                item.resupply_flag ? 'Shopping need canceled' : 'Added to shopping',
+                { type: 'flag', id: item.id, value: !item.flagged },
+                item.flagged ? 'Shopping need canceled' : 'Added to shopping',
               )
             )
               onClose();
           }}
         >
-          <Icon name="bag" /> {item.resupply_flag ? 'Cancel shopping need' : 'Add to shopping'}
+          <Icon name="bag" /> {item.flagged ? 'Cancel shopping need' : 'Add to shopping'}
         </button>
         <button disabled={busy} onClick={onConvert}>
           <Icon name="swap" /> Change unit
@@ -592,7 +602,7 @@ export function ItemDetails({
       <section class="history">
         <div class="section-heading">
           <h3>Quantity history</h3>
-          <small>Last {data.settings.history_retention_days} days</small>
+          <small>Last {data.settings.retention_days} days</small>
         </div>
         {events.length === 0 ? (
           <p class="helper">No events in the retention window.</p>
@@ -702,9 +712,9 @@ export function ConvertDialog({ item, busy, error, onClose, commit }: Common & {
             </p>
             <p>
               Threshold:{' '}
-              {item.resupply_threshold === null
+              {item.threshold === null
                 ? 'Manual only (unchanged)'
-                : `${number(item.resupply_threshold)} ${item.unit} → ${number(item.resupply_threshold * Number(factor))} ${unit}`}
+                : `${number(item.threshold)} ${item.unit} → ${number(item.threshold * Number(factor))} ${unit}`}
             </p>
             <p>Your shopping flag stays unchanged.</p>
           </div>
@@ -782,9 +792,8 @@ export function MergeDialog({
                     quantity: numeric(form, 'quantity'),
                     category: optional(form, 'category'),
                     location: optional(form, 'location'),
-                    expires_on: optional(form, 'expires_on'),
-                    resupply_threshold:
-                      optional(form, 'threshold') === null ? null : numeric(form, 'threshold'),
+                    expiry: optional(form, 'expiry'),
+                    threshold: optional(form, 'threshold') === null ? null : numeric(form, 'threshold'),
                     never_prompt: form.has('never_prompt'),
                   },
                 },
@@ -817,11 +826,9 @@ export function MergeDialog({
               {source.location || 'no location'}, {source.category || 'no category'}.
             </p>
             <p>
-              Expiry: {source.expires_on || 'none'}. Threshold:{' '}
-              {source.resupply_threshold === null
-                ? 'none'
-                : `${number(source.resupply_threshold)} ${source.unit}`}
-              . Automatic prompts: {source.never_prompt ? 'off' : 'on'}.
+              Expiry: {source.expiry || 'none'}. Threshold:{' '}
+              {source.threshold === null ? 'none' : `${number(source.threshold)} ${source.unit}`}. Automatic
+              prompts: {source.never_prompt ? 'off' : 'on'}.
             </p>
             <p>Review the values below. An existing shopping flag from either item will be kept.</p>
           </div>
@@ -848,16 +855,10 @@ export function MergeDialog({
             <input name="location" defaultValue={item.location ?? ''} />
           </Field>
           <Field label="Final earliest expiry">
-            <input type="date" name="expires_on" defaultValue={item.expires_on ?? ''} />
+            <input type="date" name="expiry" defaultValue={item.expiry ?? ''} />
           </Field>
           <Field label={`Final threshold (${item.unit})`}>
-            <input
-              type="number"
-              name="threshold"
-              min="0"
-              step="any"
-              defaultValue={item.resupply_threshold ?? ''}
-            />
+            <input type="number" name="threshold" min="0" step="any" defaultValue={item.threshold ?? ''} />
           </Field>
         </div>
         <label class="check-field">

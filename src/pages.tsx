@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'preact/hooks';
+import { useEffect, useLayoutEffect, useState } from 'preact/hooks';
 import { EmptyState, Field, Icon, dateLabel } from './components';
 import { number, qualitative, retentionCount, type InventoryData, type Item } from './model';
 import type { Commit } from './dialogs';
@@ -22,7 +22,7 @@ export function ShelfCheck({ data, busy, commit }: { data: InventoryData; busy: 
     .filter((item) => !item.deleted_at && (!location || item.location === location))
     .sort((a, b) => a.name.localeCompare(b.name));
   const current = walk ? data.items.find((item) => item.id === walk.ids[walk.index]) : undefined;
-  useEffect(() => {
+  useLayoutEffect(() => {
     setActual(String(current?.quantity ?? ''));
   }, [current?.id, current?.quantity]);
   const step = async (quantity?: number) => {
@@ -78,8 +78,8 @@ export function ShelfCheck({ data, busy, commit }: { data: InventoryData; busy: 
           <p class="walk-current">
             {number(current.quantity)} <span>{current.unit}</span>
           </p>
-          {current.display_mode === 'qualitative' && <span class="tag">{qualitative(current.quantity)}</span>}
-          <p class="helper">Last checked: {dateLabel(current.last_checked_at)}</p>
+          {current.display_mode === 'ladder' && <span class="tag">{qualitative(current.quantity)}</span>}
+          <p class="helper">Last checked: {dateLabel(current.verified_at)}</p>
           {current.deleted_at ? (
             <>
               <p>This item was archived in another window.</p>
@@ -183,7 +183,7 @@ export function ShelfCheck({ data, busy, commit }: { data: InventoryData; busy: 
         </div>
         {items.length ? (
           [...items]
-            .sort((a, b) => (a.last_checked_at ?? '').localeCompare(b.last_checked_at ?? ''))
+            .sort((a, b) => (a.verified_at ?? '').localeCompare(b.verified_at ?? ''))
             .slice(0, 8)
             .map((item) => (
               <div class="simple-row" key={item.id}>
@@ -194,7 +194,7 @@ export function ShelfCheck({ data, busy, commit }: { data: InventoryData; busy: 
                   <strong>{item.name}</strong>
                   <small>{item.location || 'No location'}</small>
                 </div>
-                <span>{dateLabel(item.last_checked_at)}</span>
+                <span>{dateLabel(item.verified_at)}</span>
               </div>
             ))
         ) : (
@@ -232,10 +232,10 @@ export function Settings({
   onInstall: () => void;
   cached: boolean;
 }) {
-  const [days, setDays] = useState(String(data.settings.history_retention_days));
+  const [days, setDays] = useState(String(data.settings.retention_days));
   useEffect(() => {
-    setDays(String(data.settings.history_retention_days));
-  }, [data.settings.history_retention_days]);
+    setDays(String(data.settings.retention_days));
+  }, [data.settings.retention_days]);
   const archived = data.items.filter((item) => item.deleted_at);
   const expiryCount =
     Number.isInteger(Number(days)) && Number(days) > 0 ? retentionCount(data, Number(days)) : 0;
@@ -332,13 +332,13 @@ export function Settings({
               </Field>
               <button
                 class="button secondary"
-                disabled={busy || Number(days) === data.settings.history_retention_days}
+                disabled={busy || Number(days) === data.settings.retention_days}
               >
                 Save preference
               </button>
             </div>
             <small>
-              {data.quantity_events.length} events retained.
+              {data.events.length} events retained.
               {expiryCount > 0 && ` This change will remove ${expiryCount} older events.`}
             </small>
           </form>
@@ -386,16 +386,14 @@ export function Settings({
                   <strong>{item.name}</strong>
                   <small>
                     {number(item.quantity)} {item.unit} ·{' '}
-                    {item.merged_into_id
-                      ? 'Merged into another item'
-                      : `Archived ${dateLabel(item.deleted_at)}`}
+                    {item.merged_into ? 'Merged into another item' : `Archived ${dateLabel(item.deleted_at)}`}
                   </small>
                 </div>
-                {item.merged_into_id ? (
+                {item.merged_into ? (
                   <button
                     class="text-button"
                     onClick={() => {
-                      const target = data.items.find((target) => target.id === item.merged_into_id);
+                      const target = data.items.find((target) => target.id === item.merged_into);
                       if (target) onOpen(target);
                     }}
                   >

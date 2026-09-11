@@ -3,6 +3,7 @@ import { deleteDB, openDB } from 'idb';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   execute,
+  exportInventory,
   loadInventory,
   readStoredInventory,
   recoverInventory,
@@ -10,6 +11,7 @@ import {
   undoLast,
 } from './storage';
 import { emptyInventory, newItemInput } from './model';
+import { legacyFixture } from '../tests/legacy-fixture';
 
 beforeEach(async () => {
   vi.restoreAllMocks();
@@ -17,10 +19,67 @@ beforeEach(async () => {
 });
 
 describe('transactional persistence', () => {
+  it('migrates old on-device data atomically, exactly once', async () => {
+    await loadInventory();
+    const old = legacyFixture();
+    const database = await openDB('cupboardcache', 1);
+    await database.put('inventory', old, 'current');
+    database.close();
+    const migrated = await loadInventory();
+    expect(migrated.id).toBe(old.id);
+    expect(migrated.revision).toBe(old.revision + 1);
+    expect(migrated.items[0]).toMatchObject({
+      id: old.items[0].id,
+      notes: 'For baking',
+      quantity: 0.432,
+      flagged: true,
+    });
+    expect(migrated.events).toEqual(old.quantity_events);
+    expect(await readStoredInventory()).toEqual(migrated);
+    expect(await loadInventory()).toEqual(migrated);
+  });
+  it('leaves the old document intact if committing its migration fails', async () => {
+    await loadInventory();
+    const old = legacyFixture();
+    const database = await openDB('cupboardcache', 1);
+    await database.put('inventory', old, 'current');
+    database.close();
+    vi.spyOn(IDBObjectStore.prototype, 'put').mockImplementationOnce(() => {
+      throw new DOMException('Quota exceeded', 'QuotaExceededError');
+    });
+    await expect(loadInventory()).rejects.toThrow('Quota exceeded');
+    expect(await readStoredInventory()).toEqual(old);
+    expect((await loadInventory()).items[0].id).toBe(old.items[0].id);
+  });
+  it('records export bookkeeping without invalidating forms or Undo', async () => {
+    const empty = await loadInventory();
+    const added = await execute(
+      { type: 'create', input: { ...newItemInput(), name: 'Exported beans' } },
+      empty.revision,
+    );
+    const backup = await exportInventory();
+    expect(backup.revision).toBe(added.revision);
+    expect(backup.settings.writes_since_export).toBe(0);
+    expect(backup.settings.last_export_at).toBe(backup.exported_at);
+    expect(await loadInventory()).toEqual(backup);
+    const undone = await undoLast(backup.revision);
+    expect(undone.items[0].deleted_at).toBeTruthy();
+    expect(undone.settings.writes_since_export).toBe(1);
+  });
+  it('can still export a valid backup when export bookkeeping cannot be saved', async () => {
+    const empty = await loadInventory();
+    vi.spyOn(IDBObjectStore.prototype, 'put').mockImplementationOnce(() => {
+      throw new DOMException('Quota exceeded', 'QuotaExceededError');
+    });
+    const backup = await exportInventory();
+    expect(backup.id).toBe(empty.id);
+    expect(backup.exported_at).toBeTruthy();
+    expect(await readStoredInventory()).toEqual(empty);
+  });
   it('saves quantity, shopping flags, and history in the same committed document', async () => {
     const empty = await loadInventory();
     const added = await execute(
-      { type: 'create', input: { ...newItemInput(), name: 'Butter', quantity: 0, resupply_threshold: 1 } },
+      { type: 'create', input: { ...newItemInput(), name: 'Butter', quantity: 0, threshold: 1 } },
       empty.revision,
     );
     const bought = await execute(
@@ -28,10 +87,10 @@ describe('transactional persistence', () => {
       added.revision,
     );
     expect(await loadInventory()).toEqual(bought);
-    expect(bought.items[0]).toMatchObject({ quantity: 4, resupply_flag: false });
-    expect(bought.quantity_events.at(-1)?.reason).toBe('purchase');
+    expect(bought.items[0]).toMatchObject({ quantity: 4, flagged: false });
+    expect(bought.events.at(-1)?.reason).toBe('purchase');
     const undone = await undoLast(bought.revision);
-    expect(undone.items[0]).toMatchObject({ quantity: 0, resupply_flag: true });
+    expect(undone.items[0]).toMatchObject({ quantity: 0, flagged: true });
     expect(await loadInventory()).toEqual(undone);
   });
   it('rejects a stale writer without losing the first change', async () => {
@@ -59,7 +118,7 @@ describe('transactional persistence', () => {
   it('restores IDs and flags while advancing the local revision', async () => {
     const empty = await loadInventory();
     const backup = await execute(
-      { type: 'create', input: { ...newItemInput(), name: 'Coffee', quantity: 0, resupply_threshold: 1 } },
+      { type: 'create', input: { ...newItemInput(), name: 'Coffee', quantity: 0, threshold: 1 } },
       empty.revision,
     );
     const changed = await execute({ type: 'actual', id: backup.items[0].id, quantity: 2 }, backup.revision);

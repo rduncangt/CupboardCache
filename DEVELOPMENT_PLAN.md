@@ -4,6 +4,8 @@ Updated 2026-09-11 from [the planning brief](cupboardcache-planning-brief.md) an
 
 ## Execution status — 2026-09-11
 
+The data format now follows Richard's `starter-pantry.json`, with only the missing document/settings metadata and local revision added. See [DATA_FORMAT.md](DATA_FORMAT.md) for the canonical names and lossless migration from earlier CupboardCache files. The starter inventory itself remains local and is not deployed.
+
 The software work for M0–M4 is implemented. The public repository and GitHub Actions deployment are active at **https://cupboardcache.sciomedes.com/**. Richard's CNAME resolves to `rduncangt.github.io`; GitHub has issued the certificate and HTTPS is enforced. Production-build tests cover desktop Chromium, phone-sized Chromium, and phone-sized WebKit, including unavailable-network relaunch, transactional failures, stale tabs, backup recovery, and safe service-worker updates.
 
 The recommended product choices below are the implementation defaults used when executing this plan: one usual location and earliest expiry, custom units plus g/kg and ml/l, manual flag cancellation, optional keep-on-list for purchases, and physical expiry of quantity events after a configurable 365 days. No account, backend, synchronization, barcode lookup, or batch tracking was added.
@@ -77,7 +79,7 @@ This sequence and DNS target follow [GitHub's custom-domain instructions](https:
 
 ## 3. Concrete data model
 
-Use these logical records inside one inventory document in IndexedDB. Export the same versioned shape as JSON. Nested value objects such as package size do not need separate IDs. The types describe the proposed data model, not application code already implemented.
+These records are implemented inside one inventory document in IndexedDB and exported in the same preferred JSON shape. Nested value objects such as package size do not need separate IDs. The runtime schema is in `src/model.ts`.
 
 ```ts
 type UUID = string;
@@ -98,20 +100,24 @@ interface PackageSize {
 
 interface Item extends RecordMeta {
   name: string;
-  description: string | null;
+  notes: string;
   aliases: string[];
   category: string | null;
   location: string | null;
   quantity: number; // finite, nonnegative, in this item's unit
   unit: string;     // e.g. bag, stick, jar, g
   package_size: PackageSize | null;
-  display_mode: "numeric" | "qualitative";
-  expires_on: LocalDate | null;
-  resupply_threshold: number | null;
-  resupply_flag: boolean;
+  display_mode: "number" | "ladder";
+  expiry: LocalDate | null;
+  threshold: number | null;
+  flagged: boolean;
+  flag_source: string | null;
+  flagged_at: Timestamp | null;
+  restock_amount: number;
+  barcodes: string[];
   never_prompt: boolean;
-  last_checked_at: Timestamp | null;
-  merged_into_id: UUID | null;
+  verified_at: Timestamp | null;
+  merged_into: UUID | null;
 }
 
 interface QuantitySnapshot {
@@ -137,29 +143,35 @@ interface ShoppingExtra extends RecordMeta {
 }
 
 interface Settings extends RecordMeta {
-  history_retention_days: number; // proposed default: 365
+  retention_days: number; // default: 365
+  last_export_at: Timestamp | null;
+  writes_since_export: number;
+  device_label: string;
 }
 
 interface InventoryData extends RecordMeta {
-  format: "cupboardcache";
-  schema_version: number; // proposed initial version: 1
+  app: "ambry"; // preferred file-format identifier, not an app rebrand
+  schema_version: 1;
+  exported_at: Timestamp | null;
+  device_label: string;
+  counts: { items: number; events: number; extras: number };
   revision: number; // increment on commits; stale-edit check, not a record ID
   items: Item[];
-  quantity_events: QuantityEvent[];
-  shopping_extras: ShoppingExtra[];
+  events: QuantityEvent[];
+  extras: ShoppingExtra[];
   settings: Settings;
 }
 ```
 
 ### Model boundaries
 
-- An item represents one kind of stock counted in one consistent unit. Multiple containers are included in its quantity. Prefer one row per stock type; use a short description for distinctions that matter when shopping.
+- An item represents one kind of stock counted in one consistent unit. Multiple containers are included in its quantity. Prefer one row per stock type; use short notes for distinctions that matter when shopping.
 - Category and location are normalized text values with suggestions from existing items. Dedicated category/location records and management screens are unnecessary for v1.
 - One item has one location and one expiry summary. Recommend that expiry mean **earliest known expiry among stock on hand**, and location mean the usual storage place. Multiple batches or independently counted locations require a later model change; see section 7.
 - Item quantity is authoritative. History explains changes and can expire without changing current quantity. It is not an event-sourced database or the future sync queue.
-- The shopping view is derived from active items with `resupply_flag === true`, plus active, unfinished `ShoppingExtra` records. Typed extras must themselves be stored; the combined shopping list is not a separate entity.
+- The shopping view is derived from active items with `flagged === true`, plus active, unfinished `ShoppingExtra` records. Typed extras must themselves be stored; the combined shopping list is not a separate entity.
 - UUIDs and original timestamps survive import. Normal edits keep the record ID and `created_at`, update `updated_at`, and set `deleted_at` on deletion. Deleted items, aliases, flags, and retained history are included in backups.
-- New items require a name, quantity, and unit. Default to numeric display, no threshold, no flag, prompting allowed, empty aliases, and null optional fields. The inventory document and singleton settings record have their own UUIDs and timestamps; their `deleted_at` stays null.
+- New items require a name, quantity, and unit. Defaults are `number` display, `count` as the unit, restock amount 1, empty notes/aliases/barcodes, no threshold or flag, and prompting allowed. The inventory document and singleton settings record have their own UUIDs and timestamps; their `deleted_at` stays null.
 
 ### Central write contract
 
@@ -175,14 +187,14 @@ Validate at both command and import boundaries: nonempty names and units; finite
 
 ### Fast entry and reconciliation
 
-The inventory screen opens with search prominent. Search matches name, aliases, and description, ignoring case and word order for multiword queries. Scan the full item list; no index is needed. Keep zero-quantity items searchable and clearly labeled “out.” Deleted items appear only in a restore view or an explicit duplicate suggestion.
+The inventory screen opens with search prominent. Search matches name, aliases, and notes, ignoring case and word order for multiword queries. Scan the full item list; no index is needed. Keep zero-quantity items searchable and clearly labeled “out.” Deleted items appear only in a restore view or an explicit duplicate suggestion.
 
-Each row offers a quick quantity adjustment and **Set actual**. The latter records an absolute count, updates `last_checked_at`, and logs a recount if the quantity changed. A metadata edit or purchase must not pretend that the shelf was physically checked.
+Each row offers a quick quantity adjustment and **Set actual**. The latter records an absolute count, updates `verified_at`, and logs a recount if the quantity changed. A metadata edit or purchase must not pretend that the shelf was physically checked.
 
 Provide both reconciliation approaches:
 
 - **Immediate correction:** tap quantity, enter the actual amount, save, and continue. Show Undo for the last action.
-- **Walk the shelf:** filter by location, then step through items with Confirm, Set actual, Out, and Skip. Confirm updates `last_checked_at` even when quantity is unchanged. Derive progress from the current walk and timestamps; a persistent reconciliation-session subsystem is unnecessary.
+- **Walk the shelf:** filter by location, then step through items with Confirm, Set actual, Out, and Skip. Confirm updates `verified_at` even when quantity is unchanged. Derive progress from the current walk and timestamps; a persistent reconciliation-session subsystem is unnecessary.
 
 Use a “least recently checked” sort and the last-checked date to expose possible drift without claiming that age proves an item is wrong. Record a correction as a recount, not a purchase, so resupply stickiness survives.
 
@@ -236,7 +248,7 @@ Provide a small, deliberate merge flow for mistakes that slip through:
 2. Review unit, location, expiry, threshold, and never-prompt conflicts explicitly.
 3. Enter the actual combined quantity. Do not automatically sum: both rows may describe the same cans.
 4. Preserve an existing shopping need by default using either item's flag.
-5. Update the survivor, log its quantity change, and soft-delete the source with `merged_into_id` pointing to the survivor, all in one command.
+5. Update the survivor, log its quantity change, and soft-delete the source with `merged_into` pointing to the survivor, all in one command.
 
 Keep the source's history attached to its original ID and make it reachable from the survivor. Undo restores both items. A merged source is not offered as an ordinary independent restore without addressing the survivor's quantity.
 
@@ -262,7 +274,7 @@ Use working software and exit checks to advance. The effort ranges below are pla
 | --- | --- | --- | --- |
 | M0 — Installed offline shell | Set up Vite/Preact, Pages deployment, manifest, service worker, and a tiny IndexedDB record. Coordinate the custom domain and HTTPS. | Install on the actual phone, close, relaunch in airplane mode, edit and relaunch again. The record survives; all required app assets load offline. Use the final domain before real inventory. | 0.5–1 day plus DNS/certificate coordination |
 | M1 — Small usable inventory | After M0: model metadata, command/persistence boundary, add item, search, quick adjustment, set actual, internal quantity events, soft delete/Undo, automatic persistence, validated export/import, and failed-save feedback. | Use 20 real items for a day; find and correct one; close, reopen offline, and restore a backup without losing its identity or history. Failed writes must be visible and recoverable. | 2–3 days |
-| M2 — Complete item handling | After M1: edit all item fields, categories/locations, descriptions/aliases, filters, numeric and qualitative modes, package conversion, unit-change rules, duplicate suggestions. | Flour, butter, rice, and spices work without ambiguous units; 2.5 jars retains spares; searching 1,000 items remains responsive. | 2–3 days |
+| M2 — Complete item handling | After M1: edit all item fields, categories/locations, notes/aliases, filters, number and ladder modes, package conversion, unit-change rules, duplicate suggestions. | Flour, butter, rice, and spices work without ambiguous units; 2.5 jars retains spares; searching 1,000 items remains responsive. | 2–3 days |
 | M3 — Shopping loop | After M2: thresholds, flags, never-prompt, ad-hoc entries, Bought and partial-purchase handling. | The transition table passes tests; a short shopping trip can be recorded without clearing flags through a recount or double-counting purchases. | 1–2 days |
 | M4 — Reconciliation and recovery | After M3: walk-the-shelf, last-checked sorting, merge, restore, history viewer/retention, and update/migration recovery cases. Add migrations earlier if an earlier milestone changes the schema. | Correct drift and a duplicate; round-trip a backup with flags and tombstones; deploy an app update and verify existing inventory survives. | 2–3 days |
 | M5 — Household pilot and v1 | After M4: use real inventory through two shopping cycles; correct observed friction and recovery defects. | Meet the acceptance criteria below, including installation, offline operation, and backup/restore on the real device. | 1–2 days of fixes plus about 2 weeks of use |

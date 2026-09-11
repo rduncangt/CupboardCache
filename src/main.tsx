@@ -357,6 +357,31 @@ function App() {
                     : 'Saved on this device'}
           </div>
         </header>
+        <section class="notification-area" aria-label="App notifications">
+          <div class="notification-slot" role="status" aria-live="polite" aria-atomic="true">
+            {toast && (
+              <div class="toast">
+                <Icon name="check" size={18} />
+                <span>{toast}</span>
+                <button aria-label="Dismiss notification" onClick={() => setToast('')}>
+                  <Icon name="close" size={16} />
+                </button>
+              </div>
+            )}
+          </div>
+          <div class="notification-actions">
+            {data && canUndo(data.revision) && (
+              <button
+                class="undo-inline"
+                aria-label="Undo last action"
+                disabled={busy || !!modal}
+                onClick={() => void undo()}
+              >
+                <Icon name="undo" size={17} /> Undo
+              </button>
+            )}
+          </div>
+        </section>
         <main id="main-content">
           {needRefresh && (
             <div class="update-notice">
@@ -808,20 +833,6 @@ function App() {
             </>
           )}
         </main>
-        {data && canUndo(data.revision) && (
-          <button class="undo-floating" disabled={busy || !!modal} onClick={() => void undo()}>
-            <Icon name="undo" size={17} /> Undo last action
-          </button>
-        )}
-        {toast && (
-          <div class="toast" role="status">
-            <Icon name="check" size={18} />
-            <span>{toast}</span>
-            <button aria-label="Dismiss notification" onClick={() => setToast('')}>
-              <Icon name="close" size={16} />
-            </button>
-          </div>
-        )}
       </div>
       <nav class="mobile-nav" aria-label="Mobile navigation">
         {nav.map((item) => (

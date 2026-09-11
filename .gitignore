@@ -22,3 +22,6 @@ test-results/
 /starter_pantry.json
 /ccdata-backup.json
 /ccdata_backup.json
+
+# Local screenshots supplied as design references
+/Screenshot*.png

@@ -27,6 +27,8 @@ Storage and backups use the preferred `starter-pantry.json` format (`app: "ambry
 
 Use **Bought** to add purchased stock and clear its shopping flag. **Set actual** corrects the shelf count but preserves an existing shopping need. Qualitative mode keeps spares: 2.5 jars is two full jars plus half; **Out** affects the open container, while **All out** sets the entire stock to zero.
 
+Confirmation messages and Undo have a dedicated row below the header. They stay in the document flow, outside the working controls and phone safe area; they never float over quantities, shelf-check actions, or navigation. Ordinary messages have reserved space, and longer messages wrap without covering content. Dismissing a message does not remove Undo.
+
 ## Develop and verify
 
 Use Node 22.12+ (Node 22 is used in CI) and npm.
@@ -47,7 +49,7 @@ npm run test:e2e
 
 `npm run verify:live` checks HTTPS, the manifest/icons, offline relaunch, and backup recovery against the live site in an isolated browser profile containing only synthetic test inventory. Add `-- --wait-for-update` before a deployment to verify an actual old-to-new release. `npm run format` formats the app and test sources.
 
-Verification covers 52 public domain/storage/migration tests and 60 browser checks across desktop Chromium, phone-sized Chromium, and phone-sized WebKit. Two additional local unit tests and six browser checks validate the complete private starter and backup files when present; they are skipped in CI because those files are not published. The scale fixture contains 1,000 items and 8,000 history events (about 3.6 MB). Phone installation and the household accuracy/usability gates remain in the pilot checklist.
+Verification covers 52 public domain/storage/migration tests and 72 browser checks across desktop Chromium, phone-sized Chromium, and phone-sized WebKit, including notification layout, Undo, long messages, and simulated phone safe-area/keyboard-sized viewports. Two additional local unit tests and six browser checks validate the complete private starter and backup files when present; they are skipped in CI because those files are not published. The scale fixture contains 1,000 items and 8,000 history events (about 3.6 MB). Phone installation and the household accuracy/usability gates remain in the pilot checklist.
 
 The PWA needs HTTPS (or localhost for development); opening `index.html` using `file://` is not supported. After installation and caching, normal use needs no network.
 

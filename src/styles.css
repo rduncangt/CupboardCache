@@ -12,6 +12,8 @@
   --cream: #f8f7f2;
   --white: #fffefa;
   --warm: #bb7046;
+  --page-gutter: 50px;
+  --safe-area-top: env(safe-area-inset-top, 0px);
 }
 * {
   box-sizing: border-box;
@@ -71,6 +73,7 @@ svg {
 }
 .app-layout {
   min-height: 100dvh;
+  padding-top: var(--safe-area-top);
 }
 .sidebar {
   width: 236px;
@@ -1369,22 +1372,41 @@ progress::-webkit-progress-value {
   display: block;
   margin-top: 4px;
 }
-.toast {
-  position: fixed;
-  bottom: 27px;
-  left: calc(50% + 118px);
-  transform: translateX(-50%);
-  display: flex;
+.notification-area {
+  /* Reserve a row in the document, never over controls or phone navigation. */
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 78px;
   align-items: center;
   gap: 10px;
+  max-width: 1290px;
+  min-height: 72px;
+  margin: 0 auto;
+  padding: 10px max(var(--page-gutter), env(safe-area-inset-right, 0px)) 10px
+    max(var(--page-gutter), env(safe-area-inset-left, 0px));
+}
+.notification-slot {
+  min-width: 0;
+}
+.notification-actions {
+  min-height: 44px;
+}
+.toast {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   background: #344b3b;
   color: #f7f8ed;
-  padding: 13px 13px 13px 17px;
+  min-height: 44px;
+  padding: 0 4px 0 12px;
   border-radius: 9px;
-  z-index: 30;
-  box-shadow: 0 5px 15px #263e2922;
   font-size: 12px;
-  max-width: min(520px, calc(100% - 30px));
+  line-height: 1.5;
+}
+.toast > span {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  padding-block: 8px;
 }
 .toast button {
   display: grid;
@@ -1392,24 +1414,23 @@ progress::-webkit-progress-value {
   border: 0;
   background: transparent;
   color: #dae5cf;
-  width: 25px;
-  height: 26px;
-  margin-left: 8px;
+  width: 44px;
+  height: 44px;
+  flex-shrink: 0;
 }
-.undo-floating {
-  position: fixed;
-  bottom: 22px;
-  right: 25px;
+.undo-inline {
   border: 1px solid #d8dfca;
   background: var(--white);
   color: #60774a;
   font-size: 11px;
-  padding: 10px 13px;
+  padding: 10px;
+  width: 100%;
+  min-height: 44px;
   border-radius: 20px;
   display: flex;
   align-items: center;
+  justify-content: center;
   gap: 7px;
-  z-index: 25;
 }
 .loading-state {
   color: #73885b;
@@ -1442,6 +1463,9 @@ progress::-webkit-progress-value {
   }
 }
 @media (max-width: 1180px) {
+  :root {
+    --page-gutter: 31px;
+  }
   .sidebar {
     width: 205px;
     padding-inline: 19px;
@@ -1461,14 +1485,14 @@ progress::-webkit-progress-value {
   main {
     padding-inline: 31px;
   }
-  .toast {
-    left: calc(50% + 102px);
-  }
   .settings-grid {
     grid-template-columns: 1fr;
   }
 }
 @media (max-width: 930px) {
+  :root {
+    --page-gutter: 25px;
+  }
   .sidebar {
     width: 184px;
     padding-inline: 15px;
@@ -1523,14 +1547,14 @@ progress::-webkit-progress-value {
   .shelf-art {
     display: none;
   }
-  .toast {
-    left: calc(50% + 92px);
-  }
   .stepper button {
     width: 31px;
   }
 }
 @media (max-width: 700px) {
+  :root {
+    --page-gutter: 21px;
+  }
   .sidebar {
     display: none;
   }
@@ -1759,26 +1783,6 @@ progress::-webkit-progress-value {
   .empty-state .button-row {
     flex-direction: column;
     gap: 9px;
-  }
-  .toast {
-    left: 15px;
-    right: 15px;
-    transform: none;
-    bottom: calc(113px + env(safe-area-inset-bottom));
-    max-width: none;
-    font-size: 11px;
-    padding: 12px;
-    z-index: 45;
-  }
-  .toast > span {
-    flex: 1;
-  }
-  .undo-floating {
-    bottom: calc(73px + env(safe-area-inset-bottom));
-    right: 15px;
-    padding: 8px 13px;
-    background: #fffefaeb;
-    font-size: 10px;
   }
   .shopping-add {
     gap: 8px;
